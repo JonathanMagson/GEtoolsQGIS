@@ -21,7 +21,7 @@ browser at the current map view, and the right-click menu has **Copy lat, lon**.
 
 ## Install
 
-1. Download `getools.zip` (or zip the `getools/` folder yourself).
+1. Download [`getools.zip`](https://github.com/JonathanMagson/GEtoolsQGIS/raw/main/getools.zip). After changing the code, rebuild it with `./build_zip.sh`.
 2. In QGIS: **Plugins ▸ Manage and Install Plugins ▸ Install from ZIP**, pick the zip, click **Install Plugin**.
 
 ## How the Google Earth Web tools work
