@@ -10,7 +10,7 @@ Requires QGIS 3.16 or newer. The tools are on the **GEtools** toolbar, under
 | Tool | ArcGIS Pro add-in | QGIS plugin |
 |---|---|---|
 | **OpenInGE** | Wrote a placemark KML and opened it in Google Earth Pro | Click the map: Google Earth Web flies there and drops a pin |
-| **SyncToGE** | KML NetworkLink that Google Earth Pro re-read every 0.3 s | A **Google Earth Web panel** docked in QGIS that follows pan, zoom and rotation |
+| **SyncToGE** | KML NetworkLink that Google Earth Pro re-read every 0.3 s | Google Earth Web follows pan, zoom and rotation, in a QGIS panel or a dedicated Chrome/Edge window |
 | **LayerToGE** | `arcpy` LayerToKML, opened in Google Earth Pro | Exports the active layer (or just its selected features) to KML in WGS84 and opens Google Earth Web framed on it |
 | **OpenInMaps** | Google Maps in the browser | Same |
 | **OpenInStreet** | Street View in the browser | Same |
@@ -26,22 +26,32 @@ browser at the current map view, and the right-click menu has **Copy lat, lon**.
 
 ## How the Google Earth Web tools work
 
-**SyncToGE** opens a "Google Earth Web" panel on the right side of QGIS. Each
-time the map settles after a pan, zoom or rotation, the panel moves to match.
-To stop, turn SyncToGE off or close the panel. If the panel stops following the
-map, untick **Fast sync (no reload)**. Sync is then slower but more reliable,
-because the page reloads at each new view. **Open in browser** opens the
-panel's current view in your normal browser.
+**SyncToGE** keeps Google Earth Web in step with the QGIS map. Each time the
+map settles after a pan, zoom or rotation, Google Earth moves to match. It runs
+in one of two ways, chosen automatically:
 
-The panel needs **Qt WebEngine**. Google Earth Web needs WebGL, and QGIS's older
-QtWebKit can't provide it. If your QGIS install has no Qt WebEngine,
-SyncToGE opens the current view in your browser once and says why. Your
-browser can't be driven live from QGIS, so use **Open current view in Google
-Earth Web** to update it. To get Qt WebEngine:
-- Linux: install your distro's `python3-pyqt5.qtwebengine` package.
-- Windows (OSGeo4W): install the `qt5-webengine` / `pyqt5-webengine` package if your installer offers it.
+1. **Google Earth Web panel inside QGIS**, if your QGIS has Qt WebEngine
+   (common on Linux; `python3-pyqt5.qtwebengine`). Turn SyncToGE off or close
+   the panel to stop.
+2. **A dedicated Chrome or Edge window** otherwise. This is the usual case on
+   Windows, where the QGIS installers don't include Qt WebEngine. Edge comes
+   with Windows, so nothing extra needs installing; Chrome is used if it's
+   there. The plugin opens Google Earth Web in its own app-style window and
+   steers it from QGIS over the browser's local DevTools connection. Close the
+   window or turn SyncToGE off to stop.
+   - The window has its own browser profile (`getools_browser` in your QGIS
+     profile folder), separate from your everyday browser, so it remembers
+     Google's cookie prompt between sessions.
+   - The DevTools port only listens on `127.0.0.1` (this computer).
 
-**OpenInGE** uses the panel when it's open, and your default browser otherwise.
+If Google Earth stops following the map, untick **Web ▸ GEtools ▸ Fast sync (no
+reload)** (or the checkbox on the panel). Sync is then slower but more reliable,
+because the page reloads at each new view.
+
+If neither Qt WebEngine nor Chrome/Edge is available, SyncToGE opens the
+current view in your default browser once and says why.
+
+**OpenInGE** and **LayerToGE** use the synced view (panel or window) when sync is on, and your default browser otherwise.
 
 **LayerToGE**: Google Earth Web has no URL or API that loads a file, so the
 KML has to be imported by hand. The plugin writes the KML to
@@ -55,7 +65,7 @@ The Google Earth Pro tip "set Fly-To Speed to 5" no longer applies.
 
 ## Development
 
-`getools/google_urls.py` has no QGIS dependency and is unit tested:
+`getools/google_urls.py` and `getools/cdp.py` have no QGIS dependency; the URL code is unit tested:
 
 ```bash
 pip install pytest
