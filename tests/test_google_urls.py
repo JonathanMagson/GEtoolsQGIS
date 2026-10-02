@@ -48,3 +48,8 @@ def test_heading_from_rotation(rotation, heading):
 
 def test_no_negative_zero():
     assert u._fmt(-0.0000001, 5) == "0"
+
+
+def test_soft_nav_js_quotes_url_safely():
+    js = u.soft_nav_js("https://earth.google.com/web/@1,2,0a,100d,35y,0h,0t,0r'</script>")
+    assert '"https://earth.google.com/web/@1,2,0a,100d,35y,0h,0t,0r\'</script>"' in js

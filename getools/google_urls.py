@@ -3,6 +3,7 @@
 Pure Python, no QGIS imports, so it can be unit tested on its own.
 """
 
+import json
 import math
 
 GOOGLE_EARTH_WEB = "https://earth.google.com/web"
@@ -82,3 +83,21 @@ def heading_from_rotation(rotation):
     the bearing of the top of the screen (0 = north, 90 = east).
     """
     return (-rotation) % 360.0
+
+
+# Moves the Google Earth camera without reloading the app: Earth Web is a
+# single-page app that follows its own history, so push the new "@..." URL
+# and announce it the way the browser's back/forward buttons would. Falls back
+# to a normal page load when Earth Web isn't the page that's showing.
+_SOFT_NAV_JS = """(function (url) {
+  if (location.host !== 'earth.google.com' || location.pathname.indexOf('/web') !== 0) {
+    location.href = url; return;
+  }
+  history.pushState(history.state, '', url);
+  window.dispatchEvent(new PopStateEvent('popstate', {state: history.state}));
+})(%s);"""
+
+
+def soft_nav_js(url):
+    """JavaScript that points an already-open Earth Web page at ``url``."""
+    return _SOFT_NAV_JS % json.dumps(url)

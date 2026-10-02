@@ -18,7 +18,11 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qgis.core import QgsApplication
+from qgis.core import QgsApplication, QgsSettings
+
+from .google_urls import soft_nav_js
+
+FAST_SYNC_KEY = "getools/fast_sync"
 
 # qgis.PyQt has no WebEngine wrapper, so import whichever PyQt QGIS runs on.
 # QGIS sets Qt.AA_ShareOpenGLContexts at startup, which is what lets
@@ -43,17 +47,6 @@ def _attr(name):
     scoped = getattr(QWebEngineSettings, "WebAttribute", None)
     return getattr(scoped, name) if scoped else getattr(QWebEngineSettings, name)
 
-
-# Moves the Google Earth camera without reloading the app: Earth Web is a
-# single-page app that follows its own history, so push the new "@..." URL
-# and announce it the way the browser's back/forward buttons would.
-_SOFT_NAV_JS = """
-(function (url) {
-  if (location.pathname.indexOf('/web') !== 0) { location.href = url; return; }
-  history.pushState(history.state, '', url);
-  window.dispatchEvent(new PopStateEvent('popstate', {state: history.state}));
-})(%s);
-"""
 
 
 if WEBENGINE_AVAILABLE:
@@ -80,7 +73,8 @@ class EarthDock(QDockWidget):
 
         toolbar = QToolBar(body)
         self.soft_nav = QCheckBox("Fast sync (no reload)", toolbar)
-        self.soft_nav.setChecked(True)
+        self.soft_nav.setChecked(QgsSettings().value(FAST_SYNC_KEY, True, type=bool))
+        self.soft_nav.toggled.connect(lambda on: QgsSettings().setValue(FAST_SYNC_KEY, on))
         self.soft_nav.setToolTip(
             "Move the Google Earth camera without reloading the page.\n"
             "Untick this if Google Earth stops following the QGIS map."
@@ -124,7 +118,7 @@ class EarthDock(QDockWidget):
         """Show ``url``; reuses the loaded app when fast sync is on."""
         self._current_url = url
         if self._loaded and self.soft_nav.isChecked() and "/web/@" in url:
-            self.view.page().runJavaScript(_SOFT_NAV_JS % _js_string(url))
+            self.view.page().runJavaScript(soft_nav_js(url))
         else:
             self._loaded = False
             self.view.setUrl(QUrl(url))
@@ -138,10 +132,6 @@ class EarthDock(QDockWidget):
         url = self.view.url().toString() or self._current_url
         if url:
             QDesktopServices.openUrl(QUrl(url))
-
-
-def _js_string(text):
-    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 DOCK_AREA = Qt.DockWidgetArea.RightDockWidgetArea if hasattr(Qt, "DockWidgetArea") else Qt.RightDockWidgetArea

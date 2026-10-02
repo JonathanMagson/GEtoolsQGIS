@@ -2,7 +2,7 @@
 name=GEtools
 qgisMinimumVersion=3.16
 description=Google Earth Web, Google Maps and Street View tools for QGIS
-about=Port of the GEtools ArcGIS Pro add-in, rebuilt around Google Earth Web instead of Google Earth Pro. OpenInGE (click the map to open that spot in Google Earth Web), SyncToGE (an embedded Google Earth Web panel that follows the QGIS map), LayerToGE (export a layer to KML and frame it in Google Earth Web), OpenInMaps, OpenInStreet and Toggle NDVI, on a toolbar, under Web > GEtools and on the map's right-click menu. Live sync needs Qt WebEngine; without it the tools open your default browser.
+about=Port of the GEtools ArcGIS Pro add-in, rebuilt around Google Earth Web instead of Google Earth Pro. OpenInGE (click the map to open that spot in Google Earth Web), SyncToGE (Google Earth Web follows the QGIS map, in a docked panel or a dedicated Chrome/Edge window), LayerToGE (export a layer to KML and frame it in Google Earth Web), OpenInMaps, OpenInStreet and Toggle NDVI, on a toolbar, under Web > GEtools and on the map's right-click menu. Live sync uses Qt WebEngine when QGIS has it, otherwise Google Chrome or Microsoft Edge.
 version=1.0.0
 author=Jonathan Magson
 email=jonathan.magson@gmail.com

@@ -5,10 +5,12 @@ import os
 from qgis.PyQt.QtCore import QTimer, QUrl
 from qgis.PyQt.QtGui import QDesktopServices, QIcon
 from qgis.PyQt.QtWidgets import QAction, QApplication, QMenu, QPushButton
-from qgis.core import Qgis, QgsProject, QgsVectorLayer
+from qgis.core import Qgis, QgsProject, QgsSettings, QgsVectorLayer
 
 from . import google_urls as urls
-from .earth_dock import DOCK_AREA, WEBENGINE_AVAILABLE, EarthDock
+from .cdp import find_browser
+from .earth_dock import DOCK_AREA, FAST_SYNC_KEY, WEBENGINE_AVAILABLE, EarthDock
+from .external_earth import ExternalEarthWindow
 from .geo import canvas_camera, extent_camera, to_lat_lon
 from .layer_export import export_layer_to_kml
 from .map_tools import PointPickTool
@@ -29,6 +31,7 @@ class GEtoolsPlugin:
         self.canvas = iface.mapCanvas()
         self.actions = []
         self.dock = None
+        self.external = None  # Chrome/Edge window, when there's no WebEngine
         self.tools = {}
 
         self.sync_timer = QTimer()
@@ -63,6 +66,12 @@ class GEtoolsPlugin:
             "icon.png", "Open current view in Google Earth Web",
             "Open Google Earth Web in your browser at the current map view",
             toolbar=False)
+        self.fast_sync = self._add_action(
+            None, "Fast sync (no reload)",
+            "Move Google Earth Web without reloading it. Untick if it stops following the map.",
+            checkable=True, toolbar=False)
+        self.fast_sync.setChecked(QgsSettings().value(FAST_SYNC_KEY, True, type=bool))
+        self.fast_sync.toggled.connect(self._set_fast_sync)
 
         self.tools = {
             self.open_in_ge: PointPickTool(self.canvas, self.open_in_ge, self.show_in_earth, self._warn),
@@ -87,6 +96,7 @@ class GEtoolsPlugin:
 
     def unload(self):
         self.set_sync(False)
+        self.external = None
         if hasattr(self.canvas, "contextMenuAboutToShow"):
             try:
                 self.canvas.contextMenuAboutToShow.disconnect(self.populate_context_menu)
@@ -139,7 +149,28 @@ class GEtoolsPlugin:
             self.dock = EarthDock(self.iface.mainWindow())
             self.iface.addDockWidget(DOCK_AREA, self.dock)
             self.dock.visibilityChanged.connect(self._dock_visibility_changed)
+            self.dock.soft_nav.toggled.connect(self.fast_sync.setChecked)
         return self.dock
+
+    def _set_fast_sync(self, on):
+        QgsSettings().setValue(FAST_SYNC_KEY, on)
+        if self.dock is not None:
+            self.dock.soft_nav.setChecked(on)
+
+    def _external_window(self):
+        """The Chrome/Edge window driver, or None if neither is installed."""
+        if self.external is None:
+            browser = find_browser()
+            if browser is None:
+                return None
+            self.external = ExternalEarthWindow(browser)
+            self.external.closed.connect(self._external_closed)
+        return self.external
+
+    def _external_closed(self, reason):
+        if self.sync_ge.isChecked():
+            self.sync_ge.setChecked(False)
+            self._warn(f"SyncToGE turned off: {reason}")
 
     def _dock_visibility_changed(self, visible):
         # Closing the panel ends syncing, like deactivating SyncToGE did.
@@ -147,9 +178,11 @@ class GEtoolsPlugin:
             self.sync_ge.setChecked(False)
 
     def show_url_in_earth(self, url):
-        """Use the Earth panel if it's open, else the system browser."""
+        """Use whichever synced Earth view is open, else the system browser."""
         dock = self._earth_dock(create=False)
-        if dock is not None and dock.isVisible():
+        if self.external is not None and self.external.active:
+            self.external.navigate(url, bring_to_front=True)
+        elif dock is not None and dock.isVisible():
             dock.navigate(url)
             dock.raise_()
         else:
@@ -164,25 +197,29 @@ class GEtoolsPlugin:
     def set_sync(self, on):
         """SyncToGE: follow every pan, zoom and rotation of the QGIS map."""
         if on:
+            # Prefer the panel inside QGIS; without Qt WebEngine (the usual
+            # case on Windows) drive a Chrome/Edge window instead.
             dock = self._earth_dock()
-            if dock is None:
-                # No embedded browser: the system browser can't be driven
-                # live, so open the current view once and say why.
+            if dock is not None:
+                dock.show()
+                dock.raise_()
+            elif self._external_window() is None:
+                # Nothing that can be driven live: open the view once.
                 self.sync_ge.setChecked(False)
                 self.open_current_view_in_browser()
                 self._warn(
-                    "Live sync needs Qt WebEngine, which this QGIS install doesn't have. "
+                    "Live sync needs Google Chrome or Microsoft Edge (or Qt WebEngine in QGIS). "
                     "Opened the current view in your browser instead; use "
                     "Web ▸ GEtools ▸ Open current view in Google Earth Web to refresh it.")
                 return
-            dock.show()
-            dock.raise_()
             self.canvas.extentsChanged.connect(self.sync_timer.start)
             self.canvas.rotationChanged.connect(self.sync_timer.start)
             self.canvas.destinationCrsChanged.connect(self.sync_timer.start)
             self.sync_now()
         else:
             self.sync_timer.stop()
+            if self.external is not None:
+                self.external.stop()
             for signal in (self.canvas.extentsChanged, self.canvas.rotationChanged,
                            self.canvas.destinationCrsChanged):
                 try:
@@ -199,8 +236,12 @@ class GEtoolsPlugin:
 
     def sync_now(self):
         url = self.current_view_url()
-        if url and self.dock is not None:
+        if not url or not self.sync_ge.isChecked():
+            return
+        if self.dock is not None:
             self.dock.navigate(url)
+        elif self.external is not None:
+            self.external.navigate(url)
 
     def open_current_view_in_browser(self):
         url = self.current_view_url()
