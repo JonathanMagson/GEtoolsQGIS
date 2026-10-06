@@ -16,6 +16,9 @@ DEFAULT_FOV = 35.0
 MIN_RANGE_M = 50.0
 MAX_RANGE_M = 30_000_000.0
 
+# Camera distance for OpenInGE: close enough to see the spot clearly.
+POINT_RANGE_M = 1000.0
+
 
 def _fmt(value, digits):
     """Format a number without trailing zeros (``1.50000`` -> ``1.5``)."""
@@ -30,14 +33,17 @@ def _check_lat_lon(lat, lon):
         raise ValueError(f"longitude {lon} is outside -180..180")
 
 
-def earth_point_url(lat, lon):
-    """Google Earth Web flown to a coordinate, with a pin dropped on it.
+def earth_point_url(lat, lon, range_m=POINT_RANGE_M):
+    """Google Earth Web looking straight down on a coordinate, with a pin on it.
 
-    The ``/search/<lat>,<lon>`` form is what replaces the "Target" KML
-    placemark the ArcGIS add-in used to write for Google Earth Pro.
+    ``/search/<lat>,<lon>`` drops the pin (it replaces the "Target" KML
+    placemark the ArcGIS add-in wrote for Google Earth Pro). The ``/@...``
+    camera after it matters: without one, Earth Web opens wherever it was last
+    left and only moves once the search resolves, which sometimes it doesn't.
     """
     _check_lat_lon(lat, lon)
-    return f"{GOOGLE_EARTH_WEB}/search/{_fmt(lat, 7)},{_fmt(lon, 7)}/"
+    camera = earth_view_url(lat, lon, range_m)[len(GOOGLE_EARTH_WEB) + 1:]
+    return f"{GOOGLE_EARTH_WEB}/search/{_fmt(lat, 7)},{_fmt(lon, 7)}/{camera}"
 
 
 def earth_view_url(lat, lon, range_m, heading=0.0, tilt=0.0, fov=DEFAULT_FOV,

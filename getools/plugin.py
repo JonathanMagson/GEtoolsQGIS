@@ -3,9 +3,10 @@
 import os
 
 from qgis.PyQt.QtCore import QTimer, QUrl
-from qgis.PyQt.QtGui import QDesktopServices, QIcon
+from qgis.PyQt.QtGui import QColor, QDesktopServices, QIcon
 from qgis.PyQt.QtWidgets import QAction, QApplication, QMenu, QPushButton
 from qgis.core import Qgis, QgsProject, QgsSettings, QgsVectorLayer
+from qgis.gui import QgsVertexMarker
 
 from . import google_urls as urls
 from .cdp import find_browser
@@ -32,6 +33,7 @@ class GEtoolsPlugin:
         self.actions = []
         self.dock = None
         self.external = None  # Chrome/Edge window, when there's no WebEngine
+        self.target = None  # cross marking the last clicked spot
         self.tools = {}
 
         self.sync_timer = QTimer()
@@ -72,15 +74,21 @@ class GEtoolsPlugin:
             checkable=True, toolbar=False)
         self.fast_sync.setChecked(QgsSettings().value(FAST_SYNC_KEY, True, type=bool))
         self.fast_sync.toggled.connect(self._set_fast_sync)
+        self.clear_target_action = self._add_action(
+            None, "Clear target marker", "Remove the cross marking the last clicked spot",
+            toolbar=False)
+        self.clear_target_action.triggered.connect(self.clear_target)
 
         self.tools = {
-            self.open_in_ge: PointPickTool(self.canvas, self.open_in_ge, self.show_in_earth, self._warn),
+            self.open_in_ge: PointPickTool(
+                self.canvas, self.open_in_ge,
+                lambda lat, lon, pt: self.open_point(urls.earth_point_url, lat, lon, pt), self._warn),
             self.open_in_maps: PointPickTool(
                 self.canvas, self.open_in_maps,
-                lambda lat, lon: self._open_browser(urls.google_maps_url(lat, lon)), self._warn),
+                lambda lat, lon, pt: self.open_point(urls.google_maps_url, lat, lon, pt), self._warn),
             self.open_in_street: PointPickTool(
                 self.canvas, self.open_in_street,
-                lambda lat, lon: self._open_browser(urls.street_view_url(lat, lon)), self._warn),
+                lambda lat, lon, pt: self.open_point(urls.street_view_url, lat, lon, pt), self._warn),
         }
         for action, tool in self.tools.items():
             action.triggered.connect(lambda checked, t=tool: self.canvas.setMapTool(t))
@@ -97,6 +105,7 @@ class GEtoolsPlugin:
     def unload(self):
         self.set_sync(False)
         self.external = None
+        self.clear_target()
         if hasattr(self.canvas, "contextMenuAboutToShow"):
             try:
                 self.canvas.contextMenuAboutToShow.disconnect(self.populate_context_menu)
@@ -190,9 +199,30 @@ class GEtoolsPlugin:
 
     # ---- tools -------------------------------------------------------------
 
-    def show_in_earth(self, lat, lon):
-        """OpenInGE: fly to a clicked point and drop a pin on it."""
-        self.show_url_in_earth(urls.earth_point_url(lat, lon))
+    def open_point(self, make_url, lat, lon, map_point):
+        """Mark a clicked spot on the map, then open it in Google Earth/Maps."""
+        self.show_target(map_point)
+        url = make_url(lat, lon)
+        if make_url is urls.earth_point_url:
+            self.show_url_in_earth(url)
+        else:
+            self._open_browser(url)
+
+    def show_target(self, map_point):
+        """Red cross on the canvas at ``map_point``; replaces the last one."""
+        if self.target is None:
+            self.target = QgsVertexMarker(self.canvas)
+            self.target.setIconType(QgsVertexMarker.ICON_CROSS)
+            self.target.setColor(QColor(230, 0, 0))
+            self.target.setIconSize(18)
+            self.target.setPenWidth(3)
+        self.target.setCenter(map_point)
+        self.target.show()
+
+    def clear_target(self):
+        if self.target is not None:
+            self.canvas.scene().removeItem(self.target)
+            self.target = None
 
     def set_sync(self, on):
         """SyncToGE: follow every pan, zoom and rotation of the QGIS map."""
@@ -314,13 +344,17 @@ class GEtoolsPlugin:
 
         ok = lat_lon is not None
         lat, lon = lat_lon if ok else (0.0, 0.0)
-        add("icon.png", "Open here in Google Earth Web", lambda: self.show_in_earth(lat, lon), ok)
+        pt = event.mapPoint()
+        add("icon.png", "Open here in Google Earth Web",
+            lambda: self.open_point(urls.earth_point_url, lat, lon, pt), ok)
         add("location-pin.png", "Open here in Google Maps",
-            lambda: self._open_browser(urls.google_maps_url(lat, lon)), ok)
+            lambda: self.open_point(urls.google_maps_url, lat, lon, pt), ok)
         add("street-view.png", "Open here in Street View",
-            lambda: self._open_browser(urls.street_view_url(lat, lon)), ok)
+            lambda: self.open_point(urls.street_view_url, lat, lon, pt), ok)
         sub.addSeparator()
         sub.addAction(self.sync_ge)
+        if self.target is not None:
+            sub.addAction(self.clear_target_action)
         if ok:
             sub.addSeparator()
             coords = f"{lat:.6f}, {lon:.6f}"

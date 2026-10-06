@@ -9,12 +9,17 @@ Requires QGIS 3.16 or newer. The tools are on the **GEtools** toolbar, under
 
 | Tool | ArcGIS Pro add-in | QGIS plugin |
 |---|---|---|
-| **OpenInGE** | Wrote a placemark KML and opened it in Google Earth Pro | Click the map: Google Earth Web flies there and drops a pin |
+| **OpenInGE** | Wrote a placemark KML and opened it in Google Earth Pro | Click the map: Google Earth Web opens looking down on that spot, with a pin on it |
 | **SyncToGE** | KML NetworkLink that Google Earth Pro re-read every 0.3 s | Google Earth Web follows pan, zoom and rotation, in a QGIS panel or a dedicated Chrome/Edge window |
 | **LayerToGE** | `arcpy` LayerToKML, opened in Google Earth Pro | Exports the active layer (or just its selected features) to KML in WGS84 and opens Google Earth Web framed on it |
 | **OpenInMaps** | Google Maps in the browser | Same |
 | **OpenInStreet** | Street View in the browser | Same |
 | **Toggle NDVI** | Show/hide the `NVDI` layer | Show/hide a layer named `NDVI` or `NVDI` |
+
+The spot you click with OpenInGE, OpenInMaps or OpenInStreet (toolbar or
+right-click menu) is marked on the QGIS map with a red cross. The next click
+replaces it; **Web ▸ GEtools ▸ Clear target marker** (also on the right-click
+menu) removes it.
 
 Extras: **Open current view in Google Earth Web** (Web ▸ GEtools) opens your
 browser at the current map view, and the right-click menu has **Copy lat, lon**.

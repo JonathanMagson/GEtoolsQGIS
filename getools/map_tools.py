@@ -7,7 +7,8 @@ from .geo import to_lat_lon
 
 
 class PointPickTool(QgsMapToolEmitPoint):
-    """Takes one left click, hands ``(lat, lon)`` to ``callback``, then hands
+    """Takes one left click, hands ``(lat, lon, map_point)`` to ``callback``
+    (``map_point`` in the canvas CRS), then hands
     the canvas back to whatever tool was active before (the ArcGIS add-in
     switched back to the Explore tool the same way)."""
 
@@ -35,7 +36,7 @@ class PointPickTool(QgsMapToolEmitPoint):
         if lat_lon is None:
             self.on_error("That point can't be converted to latitude/longitude.")
         else:
-            self.callback(*lat_lon)
+            self.callback(*lat_lon, event.mapPoint())
         self._restore_previous_tool()
 
     def _restore_previous_tool(self):
