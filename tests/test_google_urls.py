@@ -10,7 +10,15 @@ import google_urls as u  # noqa: E402
 
 
 def test_point_url_drops_pin():
-    assert u.earth_point_url(-33.8688, 151.2093) == "https://earth.google.com/web/search/-33.8688,151.2093/"
+    assert u.earth_point_url(-33.8688, 151.2093) == (
+        "https://earth.google.com/web/search/-33.8688,151.2093/"
+        "@-33.8688,151.2093,0a,1000d,35y,0h,0t,0r")
+
+
+def test_point_url_carries_its_own_camera():
+    # Regression: a bare /search/ URL opened at Earth Web's last view.
+    url = u.earth_point_url(10.5, 20.25, range_m=500)
+    assert url.endswith("/@10.5,20.25,0a,500d,35y,0h,0t,0r")
 
 
 def test_view_url_format():
