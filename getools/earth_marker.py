@@ -1,4 +1,4 @@
-"""Red X drawn over Google Earth Web at the spot clicked in QGIS.
+"""Red X targets drawn over Google Earth Web at the spots clicked in QGIS.
 
 Google Earth Web has no way to add a placemark from outside the page, so the
 plugin draws the X itself, in the Earth window it controls (the QGIS panel or
@@ -14,11 +14,11 @@ Pure Python, no QGIS imports.
 
 import json
 
-# Runs in the page. Idempotent: re-running it just retargets the marker, and
-# a null target removes it. It's also installed to run on every page load,
+# Runs in the page. Idempotent: re-running it just replaces the targets and
+# their style. It's also installed to run on every page load,
 # before the document exists, hence the wait for <body>.
-_MARKER_JS = r"""(function (target) {
-  if (window.__getoolsMarker) { window.__getoolsMarker.setTarget(target); return; }
+_MARKER_JS = r"""(function (targets, style) {
+  if (window.__getoolsMarker) { window.__getoolsMarker.setTargets(targets, style); return; }
 
   var DEG = Math.PI / 180, A = 6378137.0, E2 = 6.69437999014e-3;
 
@@ -84,25 +84,53 @@ _MARKER_JS = r"""(function (target) {
             right: innerWidth, bottom: innerHeight};
   }
 
-  var SIZE = 30;
-  var el = document.createElement('div');
-  el.id = 'getools-target';
-  el.style.cssText = 'position:fixed;width:' + SIZE + 'px;height:' + SIZE + 'px;' +
-    'pointer-events:none;z-index:2147483647;display:none;';
-  el.innerHTML = '<svg width="' + SIZE + '" height="' + SIZE + '" viewBox="0 0 30 30">' +
-    '<path d="M5 5L25 25M25 5L5 25" stroke="white" stroke-width="7" stroke-linecap="round"/>' +
-    '<path d="M5 5L25 25M25 5L5 25" stroke="#e60000" stroke-width="4" stroke-linecap="round"/>' +
-    '</svg>';
+  var layer = document.createElement('div');
+  layer.id = 'getools-targets';
+  layer.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;' +
+    'pointer-events:none;z-index:2147483647;';
 
-  var state = {target: target, href: null, moving: false, rect: ''};
+  var state = {targets: targets, style: style, href: null, moving: false, rect: ''};
+
+  // Built with DOM calls, not innerHTML: Google pages enforce Trusted
+  // Types, which blocks assigning HTML strings.
+  var SVG = 'http://www.w3.org/2000/svg';
+  function cross(style) {
+    var size = style.size, el = document.createElement('div');
+    el.className = 'getools-target';
+    el.style.cssText = 'position:absolute;width:' + size + 'px;height:' + size + 'px;display:none;';
+    var svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('width', size);
+    svg.setAttribute('height', size);
+    svg.setAttribute('viewBox', '0 0 30 30');
+    [['white', 7], [style.color, 4]].forEach(function (stroke) {
+      var path = document.createElementNS(SVG, 'path');
+      path.setAttribute('d', 'M5 5L25 25M25 5L5 25');
+      path.setAttribute('stroke', stroke[0]);
+      path.setAttribute('stroke-width', stroke[1]);
+      path.setAttribute('stroke-linecap', 'round');
+      svg.appendChild(path);
+    });
+    el.appendChild(svg);
+    return el;
+  }
+
+  function rebuild() {
+    while (layer.firstChild) layer.removeChild(layer.firstChild);
+    state.targets.forEach(function () { layer.appendChild(cross(state.style)); });
+  }
 
   function place() {
-    var pos = null, cam = parseCamera(location.href);
-    if (state.target && cam && !state.moving) pos = project(cam, state.target, globeRect());
-    if (!pos) { el.style.display = 'none'; return; }
-    el.style.left = (pos[0] - SIZE / 2) + 'px';
-    el.style.top = (pos[1] - SIZE / 2) + 'px';
-    el.style.display = 'block';
+    var cam = parseCamera(location.href), rect = globeRect();
+    var crosses = layer.children, size = state.style.size;
+    state.targets.forEach(function (target, i) {
+      var pos = (cam && !state.moving) ? project(cam, target, rect) : null;
+      var el = crosses[i];
+      if (!el) return;
+      if (!pos) { el.style.display = 'none'; return; }
+      el.style.left = (pos[0] - size / 2) + 'px';
+      el.style.top = (pos[1] - size / 2) + 'px';
+      el.style.display = 'block';
+    });
   }
 
   // Hide while the user moves the globe: the URL lags behind the camera.
@@ -121,7 +149,7 @@ _MARKER_JS = r"""(function (target) {
   addEventListener('wheel', onWheel, {capture: true, passive: true});
 
   var timer = setInterval(function () {
-    if (!el.isConnected && document.body) document.body.appendChild(el);
+    if (!layer.isConnected && document.body) document.body.appendChild(layer);
     var r = globeRect(), key = [r.left, r.top, r.width, r.height].join();
     if (location.href !== state.href || key !== state.rect) {
       state.href = location.href; state.rect = key; state.moving = false;
@@ -130,22 +158,51 @@ _MARKER_JS = r"""(function (target) {
   }, 150);
 
   window.__getoolsMarker = {
-    setTarget: function (t) { state.target = t; state.moving = false; place(); },
+    setTargets: function (t, s) {
+      state.targets = t; state.style = s; state.moving = false; rebuild(); place();
+    },
     remove: function () {
-      clearInterval(timer); el.remove(); delete window.__getoolsMarker;
+      clearInterval(timer); layer.remove(); delete window.__getoolsMarker;
       removeEventListener('pointerdown', onDown, true);
       removeEventListener('pointermove', onMove, true);
       removeEventListener('pointerup', onUp, true);
       removeEventListener('wheel', onWheel, {capture: true});
     }
   };
+  rebuild();
   place();
-})(%s);"""
+})(%s, %s);"""
+
+DEFAULT_COLOR = "#e60000"
+DEFAULT_SIZE = 30
 
 
-def marker_js(lat, lon):
-    """JavaScript that puts the X at ``lat, lon`` (or moves it there)."""
-    return _MARKER_JS % json.dumps({"lat": float(lat), "lon": float(lon)})
+def marker_js(targets, color=DEFAULT_COLOR, size=DEFAULT_SIZE):
+    """JavaScript that shows an X at each ``(lat, lon)`` in ``targets``."""
+    points = [{"lat": float(lat), "lon": float(lon)} for lat, lon in targets]
+    style = {"color": str(color), "size": int(size)}
+    return _MARKER_JS % (json.dumps(points), json.dumps(style))
 
 
 CLEAR_MARKER_JS = "window.__getoolsMarker && window.__getoolsMarker.remove();"
+
+
+# Reports what two-way sync and the footprint need: the address (camera) and
+# the globe canvas, as JSON. The canvas is the largest <canvas> on the page,
+# possibly inside shadow DOM, like globeRect() above.
+VIEW_INFO_JS = r"""(function () {
+  var best = null, bestArea = 0;
+  (function walk(root) {
+    root.querySelectorAll('*').forEach(function (el) {
+      if (el.tagName === 'CANVAS') {
+        var r = el.getBoundingClientRect(), area = r.width * r.height;
+        if (area > bestArea) { best = r; bestArea = area; }
+      }
+      if (el.shadowRoot) walk(el.shadowRoot);
+    });
+  })(document);
+  var r = best || {left: 0, top: 0, width: innerWidth, height: innerHeight};
+  return JSON.stringify({href: location.href, left: r.left, top: r.top,
+                         width: r.width, height: r.height, canvas: !!best,
+                         ready: document.readyState});
+})()"""
