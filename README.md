@@ -9,7 +9,7 @@ Requires QGIS 3.16 or newer. The tools are on the **GEtools** toolbar, under
 
 | Tool | ArcGIS Pro add-in | QGIS plugin |
 |---|---|---|
-| **OpenInGE** | Wrote a placemark KML and opened it in Google Earth Pro | Click the map: Google Earth Web opens looking down on that spot, with a pin on it |
+| **OpenInGE** | Wrote a placemark KML and opened it in Google Earth Pro | Click the map: Google Earth Web opens looking down on that spot, marked with a red X |
 | **SyncToGE** | KML NetworkLink that Google Earth Pro re-read every 0.3 s | Google Earth Web follows pan, zoom and rotation, in a QGIS panel or a dedicated Chrome/Edge window |
 | **LayerToGE** | `arcpy` LayerToKML, opened in Google Earth Pro | Exports the active layer (or just its selected features) to KML in WGS84 and opens Google Earth Web framed on it |
 | **OpenInMaps** | Google Maps in the browser | Same |
@@ -19,7 +19,7 @@ Requires QGIS 3.16 or newer. The tools are on the **GEtools** toolbar, under
 The spot you click with OpenInGE, OpenInMaps or OpenInStreet (toolbar or
 right-click menu) is marked on the QGIS map with a red cross. The next click
 replaces it; **Web ▸ GEtools ▸ Clear target marker** (also on the right-click
-menu) removes it.
+menu) removes it, in QGIS and in Google Earth.
 
 Extras: **Open current view in Google Earth Web** (Web ▸ GEtools) opens your
 browser at the current map view, and the right-click menu has **Copy lat, lon**.
@@ -56,7 +56,17 @@ because the page reloads at each new view.
 If neither Qt WebEngine nor Chrome/Edge is available, SyncToGE opens the
 current view in your default browser once and says why.
 
-**OpenInGE** and **LayerToGE** use the synced view (panel or window) when sync is on, and your default browser otherwise.
+**OpenInGE** always opens in the Google Earth panel or the Chrome/Edge window,
+even with sync off, and draws a **red X** on the clicked spot. Google Earth Web
+can't be given a placemark from outside, so the plugin draws the X over the
+globe itself, working out where the spot is from the camera position Google
+Earth keeps in its address. The X stays on the spot as you pan, zoom and tilt.
+It hides while you drag or scroll, and comes back once the view settles. Only
+with neither Qt WebEngine nor Chrome/Edge does OpenInGE fall back to your
+default browser, with no X.
+
+**LayerToGE** uses the synced view (panel or window) when sync is on, and your
+default browser otherwise.
 
 **LayerToGE**: Google Earth Web has no URL or API that loads a file, so the
 KML has to be imported by hand. The plugin writes the KML to

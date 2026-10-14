@@ -20,6 +20,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.core import QgsApplication, QgsSettings
 
+from .earth_marker import CLEAR_MARKER_JS
 from .google_urls import soft_nav_js
 
 FAST_SYNC_KEY = "getools/fast_sync"
@@ -94,6 +95,7 @@ class EarthDock(QDockWidget):
         for name in ("WebGLEnabled", "Accelerated2dCanvasEnabled", "LocalStorageEnabled"):
             settings.setAttribute(_attr(name), True)
         self.view.loadFinished.connect(self._on_load_finished)
+        self._marker_js = None
         layout.addWidget(self.view)
 
         self.setWidget(body)
@@ -113,6 +115,13 @@ class EarthDock(QDockWidget):
 
     def _on_load_finished(self, ok):
         self._loaded = ok
+        if self._marker_js:  # a full load wiped the target X; redraw it
+            self.view.page().runJavaScript(self._marker_js)
+
+    def set_marker(self, js):
+        """Draw (``js``) or clear (``None``) the target X over Earth Web."""
+        self._marker_js = js
+        self.view.page().runJavaScript(js or CLEAR_MARKER_JS)
 
     def navigate(self, url):
         """Show ``url``; reuses the loaded app when fast sync is on."""

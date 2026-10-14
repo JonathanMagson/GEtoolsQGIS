@@ -34,12 +34,12 @@ def _check_lat_lon(lat, lon):
 
 
 def earth_point_url(lat, lon, range_m=POINT_RANGE_M):
-    """Google Earth Web looking straight down on a coordinate, with a pin on it.
+    """Google Earth Web looking straight down on a coordinate.
 
-    ``/search/<lat>,<lon>`` drops the pin (it replaces the "Target" KML
-    placemark the ArcGIS add-in wrote for Google Earth Pro). The ``/@...``
-    camera after it matters: without one, Earth Web opens wherever it was last
-    left and only moves once the search resolves, which sometimes it doesn't.
+    For browsers the plugin can't draw its X in. The ``/@...`` camera matters:
+    a bare ``/search/<lat>,<lon>`` opens wherever Earth Web was last left and
+    only moves once the search resolves, which sometimes it doesn't. With the
+    camera present, Earth Web doesn't run the search, so there's no pin.
     """
     _check_lat_lon(lat, lon)
     camera = earth_view_url(lat, lon, range_m)[len(GOOGLE_EARTH_WEB) + 1:]

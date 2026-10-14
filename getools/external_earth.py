@@ -13,6 +13,7 @@ from qgis.core import QgsApplication, QgsSettings
 
 from . import cdp
 from .earth_dock import FAST_SYNC_KEY
+from .earth_marker import CLEAR_MARKER_JS
 from .google_urls import soft_nav_js
 
 STARTUP_TIMEOUT_S = 20.0
@@ -36,6 +37,8 @@ class ExternalEarthWindow(QObject):
         self.started_at = None
         self.launched_url = None
         self.loaded_earth = False
+        self.marker_js = None  # script drawing the target X, if one is set
+        self.marker_script_id = None
         self.poll = QTimer(self)
         self.poll.setInterval(POLL_MS)
         self.poll.timeout.connect(self._try_connect)
@@ -65,6 +68,20 @@ class ExternalEarthWindow(QObject):
                 self._disconnect()
                 self.closed.emit(f"Lost contact with {self.name}: {exc}")
 
+    def set_marker(self, js):
+        """Draw (``js``) or clear (``None``) the target X in the Earth window.
+
+        The script is also registered to run on every page load, so the X
+        survives full reloads of Earth Web.
+        """
+        self.marker_js = js
+        if self.conn is None:
+            return  # applied by _attach once connected
+        try:
+            self._install_marker()
+        except cdp.CdpError:
+            self._disconnect()
+
     def stop(self):
         """Stop driving the window. The window itself is left open."""
         self.poll.stop()
@@ -84,6 +101,18 @@ class ExternalEarthWindow(QObject):
             self.conn.call("Page.bringToFront")
         self.pending_url = None
 
+    def _install_marker(self):
+        if self.marker_script_id is not None:
+            self.conn.call("Page.removeScriptToEvaluateOnNewDocument",
+                           identifier=self.marker_script_id)
+            self.marker_script_id = None
+        if self.marker_js:
+            # Load-time scripts only run while the Page domain is enabled.
+            self.conn.call("Page.enable")
+            result = self.conn.call("Page.addScriptToEvaluateOnNewDocument", source=self.marker_js)
+            self.marker_script_id = result.get("identifier")
+        self.conn.call("Runtime.evaluate", expression=self.marker_js or CLEAR_MARKER_JS)
+
     def _attach(self):
         """Connect to a browser already running on our profile, if any."""
         port = cdp.read_port(self.profile_dir)
@@ -100,6 +129,14 @@ class ExternalEarthWindow(QObject):
         # Whatever is showing may not be Earth Web yet; the first move is a
         # real navigation, then fast sync takes over.
         self.loaded_earth = False
+        # Scripts registered on a previous connection died with it.
+        self.marker_script_id = None
+        if self.marker_js:
+            try:
+                self._install_marker()
+            except cdp.CdpError:
+                self._disconnect()
+                return False
         return True
 
     def _start(self, url):

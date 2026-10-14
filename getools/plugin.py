@@ -10,6 +10,7 @@ from qgis.gui import QgsVertexMarker
 
 from . import google_urls as urls
 from .cdp import find_browser
+from .earth_marker import marker_js
 from .earth_dock import DOCK_AREA, FAST_SYNC_KEY, WEBENGINE_AVAILABLE, EarthDock
 from .external_earth import ExternalEarthWindow
 from .geo import canvas_camera, extent_camera, to_lat_lon
@@ -202,11 +203,32 @@ class GEtoolsPlugin:
     def open_point(self, make_url, lat, lon, map_point):
         """Mark a clicked spot on the map, then open it in Google Earth/Maps."""
         self.show_target(map_point)
-        url = make_url(lat, lon)
         if make_url is urls.earth_point_url:
-            self.show_url_in_earth(url)
+            self.open_point_in_earth(lat, lon)
         else:
-            self._open_browser(url)
+            self._open_browser(make_url(lat, lon))
+
+    def open_point_in_earth(self, lat, lon):
+        """OpenInGE: look down on the spot in Google Earth Web, marked with an X.
+
+        Uses the Earth panel or the Chrome/Edge window even when sync is off,
+        because only a page the plugin controls can carry the X. Plain
+        browsers get a search link instead, which drops Google's own pin.
+        """
+        view_url = urls.earth_view_url(lat, lon, urls.POINT_RANGE_M)
+        dock = self._earth_dock()
+        if dock is not None:
+            dock.show()
+            dock.raise_()
+            dock.set_marker(marker_js(lat, lon))
+            dock.navigate(view_url)
+            return
+        external = self._external_window()
+        if external is not None:
+            external.set_marker(marker_js(lat, lon))
+            external.navigate(view_url, bring_to_front=True)
+            return
+        self._open_browser(urls.earth_point_url(lat, lon))
 
     def show_target(self, map_point):
         """Red cross on the canvas at ``map_point``; replaces the last one."""
@@ -223,6 +245,10 @@ class GEtoolsPlugin:
         if self.target is not None:
             self.canvas.scene().removeItem(self.target)
             self.target = None
+        if self.dock is not None:
+            self.dock.set_marker(None)
+        if self.external is not None:
+            self.external.set_marker(None)
 
     def set_sync(self, on):
         """SyncToGE: follow every pan, zoom and rotation of the QGIS map."""
