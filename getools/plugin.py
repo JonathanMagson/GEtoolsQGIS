@@ -5,7 +5,7 @@ import os
 from qgis.PyQt.QtCore import QTimer, QUrl
 from qgis.PyQt.QtGui import QColor, QDesktopServices, QIcon
 from qgis.PyQt.QtWidgets import QAction, QApplication, QMenu, QPushButton
-from qgis.core import Qgis, QgsProject, QgsSettings, QgsVectorLayer
+from qgis.core import Qgis, QgsSettings, QgsVectorLayer
 from qgis.gui import QgsVertexMarker
 
 from . import google_urls as urls
@@ -19,7 +19,7 @@ from .map_tools import PointPickTool
 
 MENU = "&GEtools"
 ICONS = os.path.join(os.path.dirname(__file__), "icons")
-NDVI_LAYER_NAMES = ("ndvi", "nvdi")  # the ArcGIS add-in looked for "NVDI"
+RAISE_KEY = "getools/raise_earth_window"
 SYNC_DELAY_MS = 400  # wait for panning/zooming to settle before syncing
 
 
@@ -63,8 +63,6 @@ class GEtoolsPlugin:
         self.open_in_street = self._add_action(
             "street-view.png", "OpenInStreet", "Click the map to open that spot in Street View",
             checkable=True)
-        self.toggle_ndvi = self._add_action(
-            None, "Toggle NDVI", "Show/hide the layer named 'NDVI' (or 'NVDI')")
         self.current_view = self._add_action(
             "icon.png", "Open current view in Google Earth Web",
             "Open Google Earth Web in your browser at the current map view",
@@ -75,6 +73,13 @@ class GEtoolsPlugin:
             checkable=True, toolbar=False)
         self.fast_sync.setChecked(QgsSettings().value(FAST_SYNC_KEY, True, type=bool))
         self.fast_sync.toggled.connect(self._set_fast_sync)
+        self.raise_earth = self._add_action(
+            None, "Bring Google Earth to front",
+            "When OpenInGE or LayerToGE moves Google Earth, restore its window if "
+            "minimized and bring it in front. Map syncing never does this.",
+            checkable=True, toolbar=False)
+        self.raise_earth.setChecked(QgsSettings().value(RAISE_KEY, True, type=bool))
+        self.raise_earth.toggled.connect(lambda on: QgsSettings().setValue(RAISE_KEY, on))
         self.clear_target_action = self._add_action(
             None, "Clear target marker", "Remove the cross marking the last clicked spot",
             toolbar=False)
@@ -96,7 +101,6 @@ class GEtoolsPlugin:
 
         self.sync_ge.toggled.connect(self.set_sync)
         self.layer_to_ge.triggered.connect(self.send_layer)
-        self.toggle_ndvi.triggered.connect(self.toggle_ndvi_layer)
         self.current_view.triggered.connect(self.open_current_view_in_browser)
 
         # Right-click on the map (needs QGIS 3.16+).
@@ -191,10 +195,11 @@ class GEtoolsPlugin:
         """Use whichever synced Earth view is open, else the system browser."""
         dock = self._earth_dock(create=False)
         if self.external is not None and self.external.active:
-            self.external.navigate(url, bring_to_front=True)
+            self.external.navigate(url, bring_to_front=self.raise_earth.isChecked())
         elif dock is not None and dock.isVisible():
             dock.navigate(url)
-            dock.raise_()
+            if self.raise_earth.isChecked():
+                dock.raise_()
         else:
             self._open_browser(url)
 
@@ -219,14 +224,15 @@ class GEtoolsPlugin:
         dock = self._earth_dock()
         if dock is not None:
             dock.show()
-            dock.raise_()
+            if self.raise_earth.isChecked():
+                dock.raise_()
             dock.set_marker(marker_js(lat, lon))
             dock.navigate(view_url)
             return
         external = self._external_window()
         if external is not None:
             external.set_marker(marker_js(lat, lon))
-            external.navigate(view_url, bring_to_front=True)
+            external.navigate(view_url, bring_to_front=self.raise_earth.isChecked())
             return
         self._open_browser(urls.earth_point_url(lat, lon))
 
@@ -342,18 +348,6 @@ class GEtoolsPlugin:
             f"Exported {what}'{layer.name()}' to {path} (path copied to clipboard). "
             "In Google Earth Web: Projects ▸ New project ▸ Import KML file from computer.",
             Qgis.Success, widget=folder_button, duration=0)
-
-    def toggle_ndvi_layer(self):
-        root = QgsProject.instance().layerTreeRoot()
-        nodes = [n for n in root.findLayers() if n.name().strip().lower() in NDVI_LAYER_NAMES]
-        if not nodes:
-            self._warn("No layer named 'NDVI' (or 'NVDI') in the Layers panel.")
-            return
-        visible = not nodes[0].isVisible()
-        for node in nodes:
-            node.setItemVisibilityChecked(visible)
-            if visible:
-                node.setItemVisibilityCheckedParentRecursive(True)
 
     # ---- right-click menu --------------------------------------------------
 

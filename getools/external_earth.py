@@ -5,7 +5,9 @@ remembers Google's cookie consent between sessions without touching the
 user's everyday browser.
 """
 
+import ctypes
 import os
+import sys
 import time
 
 from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
@@ -52,7 +54,7 @@ class ExternalEarthWindow(QObject):
         self.pending_url = url
         if self.conn is None:
             if not self.poll.isActive():
-                self._start(url)
+                self._start(url, bring_to_front)
             return
         try:
             self._go(url, bring_to_front)
@@ -98,7 +100,7 @@ class ExternalEarthWindow(QObject):
             self.conn.call("Page.navigate", url=url)
             self.loaded_earth = True
         if bring_to_front:
-            self.conn.call("Page.bringToFront")
+            self._raise_window()
         self.pending_url = None
 
     def _install_marker(self):
@@ -112,6 +114,28 @@ class ExternalEarthWindow(QObject):
             result = self.conn.call("Page.addScriptToEvaluateOnNewDocument", source=self.marker_js)
             self.marker_script_id = result.get("identifier")
         self.conn.call("Runtime.evaluate", expression=self.marker_js or CLEAR_MARKER_JS)
+
+    def _raise_window(self):
+        """Restore the Earth window if minimized and put it in front.
+
+        Page.bringToFront alone only picks the tab; it leaves a minimized
+        window minimized.
+        """
+        if sys.platform.startswith("win"):
+            # Windows only lets the foreground app (QGIS, which was just
+            # clicked) hand focus to another process; grant it.
+            try:
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
+            except (AttributeError, OSError):
+                pass
+        try:
+            window = self.conn.call("Browser.getWindowForTarget")
+            if window.get("bounds", {}).get("windowState") == "minimized":
+                self.conn.call("Browser.setWindowBounds", windowId=window["windowId"],
+                               bounds={"windowState": "normal"})
+        except cdp.CdpError:
+            pass  # browser without the Browser domain: just pick the tab
+        self.conn.call("Page.bringToFront")
 
     def _attach(self):
         """Connect to a browser already running on our profile, if any."""
@@ -139,9 +163,9 @@ class ExternalEarthWindow(QObject):
                 return False
         return True
 
-    def _start(self, url):
+    def _start(self, url, bring_to_front):
         if self._attach():
-            self.navigate(url, bring_to_front=True)
+            self.navigate(url, bring_to_front)
             return
         try:
             self.process = cdp.launch(self.browser, self.profile_dir, url)
