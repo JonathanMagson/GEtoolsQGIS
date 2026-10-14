@@ -14,7 +14,6 @@ Requires QGIS 3.16 or newer. The tools are on the **GEtools** toolbar, under
 | **LayerToGE** | `arcpy` LayerToKML, opened in Google Earth Pro | Exports the active layer (or just its selected features) to KML in WGS84 and opens Google Earth Web framed on it |
 | **OpenInMaps** | Google Maps in the browser | Same |
 | **OpenInStreet** | Street View in the browser | Same |
-| **Toggle NDVI** | Show/hide the `NVDI` layer | Show/hide a layer named `NDVI` or `NVDI` |
 
 The spot you click with OpenInGE, OpenInMaps or OpenInStreet (toolbar or
 right-click menu) is marked on the QGIS map with a red cross. The next click
@@ -64,6 +63,11 @@ Earth keeps in its address. The X stays on the spot as you pan, zoom and tilt.
 It hides while you drag or scroll, and comes back once the view settles. Only
 with neither Qt WebEngine nor Chrome/Edge does OpenInGE fall back to your
 default browser, with no X.
+
+**Bring Google Earth to front** (Web ▸ GEtools, on by default): when OpenInGE
+or LayerToGE moves Google Earth, the plugin restores its window if it's
+minimized and puts it in front. Untick it to keep the window where it is. Map
+syncing never brings the window forward.
 
 **LayerToGE** uses the synced view (panel or window) when sync is on, and your
 default browser otherwise.
