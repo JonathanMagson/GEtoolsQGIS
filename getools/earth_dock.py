@@ -5,25 +5,26 @@ can't provide). When WebEngine isn't available, ``WEBENGINE_AVAILABLE`` is
 False and the plugin falls back to the system browser.
 """
 
+import json
 import os
 import re
 
-from qgis.PyQt.QtCore import QUrl, Qt
-from qgis.PyQt.QtGui import QDesktopServices
+from qgis.PyQt.QtCore import QMimeData, QPoint, QPointF, QUrl, Qt
+from qgis.PyQt.QtGui import QDesktopServices, QDragEnterEvent, QDragMoveEvent, QDropEvent
 from qgis.PyQt.QtWidgets import (
     QAction,
     QCheckBox,
+    QApplication,
     QDockWidget,
     QToolBar,
     QVBoxLayout,
     QWidget,
 )
-from qgis.core import QgsApplication, QgsSettings
+from qgis.core import QgsApplication
 
-from .earth_marker import CLEAR_MARKER_JS
+from . import settings
+from .earth_marker import CLEAR_MARKER_JS, VIEW_INFO_JS
 from .google_urls import soft_nav_js
-
-FAST_SYNC_KEY = "getools/fast_sync"
 
 # qgis.PyQt has no WebEngine wrapper, so import whichever PyQt QGIS runs on.
 # QGIS sets Qt.AA_ShareOpenGLContexts at startup, which is what lets
@@ -74,8 +75,8 @@ class EarthDock(QDockWidget):
 
         toolbar = QToolBar(body)
         self.soft_nav = QCheckBox("Fast sync (no reload)", toolbar)
-        self.soft_nav.setChecked(QgsSettings().value(FAST_SYNC_KEY, True, type=bool))
-        self.soft_nav.toggled.connect(lambda on: QgsSettings().setValue(FAST_SYNC_KEY, on))
+        self.soft_nav.setChecked(settings.get("fast_sync"))
+        self.soft_nav.toggled.connect(lambda on: settings.set("fast_sync", on))
         self.soft_nav.setToolTip(
             "Move the Google Earth camera without reloading the page.\n"
             "Untick this if Google Earth stops following the QGIS map."
@@ -91,9 +92,9 @@ class EarthDock(QDockWidget):
 
         self.view = QWebEngineView(body)
         self.view.setPage(_Page(self._profile(), self.view))
-        settings = self.view.settings()
+        web_settings = self.view.settings()
         for name in ("WebGLEnabled", "Accelerated2dCanvasEnabled", "LocalStorageEnabled"):
-            settings.setAttribute(_attr(name), True)
+            web_settings.setAttribute(_attr(name), True)
         self.view.loadFinished.connect(self._on_load_finished)
         self._marker_js = None
         layout.addWidget(self.view)
@@ -118,12 +119,43 @@ class EarthDock(QDockWidget):
         if self._marker_js:  # a full load wiped the target X; redraw it
             self.view.page().runJavaScript(self._marker_js)
 
-    def set_marker(self, js):
-        """Draw (``js``) or clear (``None``) the target X over Earth Web."""
+    def set_markers(self, js):
+        """Draw (``js``) or clear (``None``) the target Xs over Earth Web."""
         self._marker_js = js
         self.view.page().runJavaScript(js or CLEAR_MARKER_JS)
 
-    def navigate(self, url):
+    def is_open(self):
+        return self.isVisible()
+
+    def query_view(self, callback):
+        """Call ``callback`` with the page's address and globe canvas (a
+        dict, see earth_marker.VIEW_INFO_JS), or ``None`` if unavailable."""
+        def done(result):
+            try:
+                callback(json.loads(result) if result else None)
+            except ValueError:
+                callback(None)
+        self.view.page().runJavaScript(VIEW_INFO_JS, done)
+
+    def drop_file(self, path, x, y):
+        """Drop a local file on the page at ``x, y`` (CSS pixels), as if
+        dragged from the file manager."""
+        target = self.view.focusProxy() or self.view
+        zoom = self.view.zoomFactor() or 1.0
+        pos = QPoint(int(x * zoom), int(y * zoom))
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(path)])
+        copy = Qt.DropAction.CopyAction if hasattr(Qt, "DropAction") else Qt.CopyAction
+        no_buttons = Qt.MouseButton.NoButton if hasattr(Qt, "MouseButton") else Qt.NoButton
+        no_mods = (Qt.KeyboardModifier.NoModifier if hasattr(Qt, "KeyboardModifier")
+                   else Qt.NoModifier)
+        for event in (QDragEnterEvent(pos, copy, mime, no_buttons, no_mods),
+                      QDragMoveEvent(pos, copy, mime, no_buttons, no_mods),
+                      QDropEvent(QPointF(pos), copy, mime, no_buttons, no_mods)):
+            QApplication.sendEvent(target, event)
+        return True
+
+    def navigate(self, url, bring_to_front=False):
         """Show ``url``; reuses the loaded app when fast sync is on."""
         self._current_url = url
         if self._loaded and self.soft_nav.isChecked() and "/web/@" in url:

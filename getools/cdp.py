@@ -17,32 +17,39 @@ import subprocess
 import sys
 import urllib.request
 
-_WINDOWS_CANDIDATES = (
-    (r"%ProgramFiles%", r"Google\Chrome\Application\chrome.exe"),
-    (r"%ProgramFiles(x86)%", r"Google\Chrome\Application\chrome.exe"),
-    (r"%LocalAppData%", r"Google\Chrome\Application\chrome.exe"),
-    (r"%ProgramFiles(x86)%", r"Microsoft\Edge\Application\msedge.exe"),
-    (r"%ProgramFiles%", r"Microsoft\Edge\Application\msedge.exe"),
-)
-_MAC_CANDIDATES = (
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-)
-_LINUX_NAMES = (
-    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
-    "microsoft-edge", "microsoft-edge-stable",
-)
+# Where each browser lives, per platform. Order within a list is preference.
+_WINDOWS_CANDIDATES = {
+    "chrome": (
+        (r"%ProgramFiles%", r"Google\Chrome\Application\chrome.exe"),
+        (r"%ProgramFiles(x86)%", r"Google\Chrome\Application\chrome.exe"),
+        (r"%LocalAppData%", r"Google\Chrome\Application\chrome.exe"),
+    ),
+    "edge": (
+        (r"%ProgramFiles(x86)%", r"Microsoft\Edge\Application\msedge.exe"),
+        (r"%ProgramFiles%", r"Microsoft\Edge\Application\msedge.exe"),
+    ),
+}
+_MAC_CANDIDATES = {
+    "chrome": ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+               "/Applications/Chromium.app/Contents/MacOS/Chromium"),
+    "edge": ("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",),
+}
+_LINUX_NAMES = {
+    "chrome": ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"),
+    "edge": ("microsoft-edge", "microsoft-edge-stable"),
+}
+
+#: Choices for the browser setting. "auto" prefers Chrome, then Edge.
+BROWSER_CHOICES = ("auto", "chrome", "edge", "custom")
 
 
 class CdpError(Exception):
     pass
 
 
-def find_browser():
-    """Path to Chrome or Edge (or Chromium), or ``None``. Chrome wins over Edge."""
+def _find_kind(kind):
     if sys.platform.startswith("win"):
-        for root, rel in _WINDOWS_CANDIDATES:
+        for root, rel in _WINDOWS_CANDIDATES[kind]:
             base = os.path.expandvars(root)
             if base != root:  # variable was set
                 path = os.path.join(base, rel)
@@ -50,8 +57,20 @@ def find_browser():
                     return path
         return None
     if sys.platform == "darwin":
-        return next((p for p in _MAC_CANDIDATES if os.path.isfile(p)), None)
-    return next((shutil.which(n) for n in _LINUX_NAMES if shutil.which(n)), None)
+        return next((p for p in _MAC_CANDIDATES[kind] if os.path.isfile(p)), None)
+    return next((shutil.which(n) for n in _LINUX_NAMES[kind] if shutil.which(n)), None)
+
+
+def find_browser(choice="auto", custom_path=""):
+    """Path of the browser to drive, or ``None`` if it isn't installed.
+
+    ``choice`` is one of ``BROWSER_CHOICES``; "auto" takes Chrome, else Edge.
+    """
+    if choice == "custom":
+        return custom_path if custom_path and os.path.isfile(custom_path) else None
+    if choice in ("chrome", "edge"):
+        return _find_kind(choice)
+    return _find_kind("chrome") or _find_kind("edge")
 
 
 def browser_name(path):
@@ -116,6 +135,16 @@ def find_page(port, url_hint="earth.google.com"):
         if url_hint in t.get("url", ""):
             return t["webSocketDebuggerUrl"]
     return pages[0]["webSocketDebuggerUrl"] if pages else None
+
+
+def drop_file_events(path, x, y):
+    """CDP ``Input.dispatchDragEvent`` calls that drop a local file at x, y.
+
+    This is the same as dragging the file from Explorer/Finder onto the page.
+    """
+    data = {"items": [], "files": [os.path.abspath(path)], "dragOperationsMask": 1}
+    return [("Input.dispatchDragEvent", {"type": kind, "x": x, "y": y, "data": data})
+            for kind in ("dragEnter", "dragOver", "drop")]
 
 
 class CdpConnection:

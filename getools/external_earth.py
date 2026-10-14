@@ -6,16 +6,16 @@ user's everyday browser.
 """
 
 import ctypes
+import json
 import os
 import sys
 import time
 
 from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
-from qgis.core import QgsApplication, QgsSettings
+from qgis.core import QgsApplication
 
-from . import cdp
-from .earth_dock import FAST_SYNC_KEY
-from .earth_marker import CLEAR_MARKER_JS
+from . import cdp, settings
+from .earth_marker import CLEAR_MARKER_JS, VIEW_INFO_JS
 from .google_urls import soft_nav_js
 
 STARTUP_TIMEOUT_S = 20.0
@@ -49,6 +49,10 @@ class ExternalEarthWindow(QObject):
     def active(self):
         return self.conn is not None or self.poll.isActive()
 
+    def is_open(self):
+        """Connected to a live Earth window."""
+        return self.conn is not None
+
     def navigate(self, url, bring_to_front=False):
         """Show ``url``, starting (or reattaching to) the browser if needed."""
         self.pending_url = url
@@ -70,8 +74,8 @@ class ExternalEarthWindow(QObject):
                 self._disconnect()
                 self.closed.emit(f"Lost contact with {self.name}: {exc}")
 
-    def set_marker(self, js):
-        """Draw (``js``) or clear (``None``) the target X in the Earth window.
+    def set_markers(self, js):
+        """Draw (``js``) or clear (``None``) the target Xs in the Earth window.
 
         The script is also registered to run on every page load, so the X
         survives full reloads of Earth Web.
@@ -84,6 +88,32 @@ class ExternalEarthWindow(QObject):
         except cdp.CdpError:
             self._disconnect()
 
+    def query_view(self, callback):
+        """Call ``callback`` with the page's address and globe canvas (a
+        dict, see earth_marker.VIEW_INFO_JS), or ``None`` if unavailable."""
+        info = None
+        if self.conn is not None:
+            try:
+                result = self.conn.call("Runtime.evaluate", expression=VIEW_INFO_JS,
+                                        returnByValue=True)
+                info = json.loads(result.get("result", {}).get("value") or "null")
+            except (cdp.CdpError, ValueError):
+                self._disconnect()
+        callback(info)
+
+    def drop_file(self, path, x, y):
+        """Drop a local file on the page at ``x, y``, as if dragged from the
+        file manager. Returns False if the window couldn't be reached."""
+        if self.conn is None:
+            return False
+        try:
+            for method, params in cdp.drop_file_events(path, x, y):
+                self.conn.call(method, **params)
+        except cdp.CdpError:
+            self._disconnect()
+            return False
+        return True
+
     def stop(self):
         """Stop driving the window. The window itself is left open."""
         self.poll.stop()
@@ -93,7 +123,7 @@ class ExternalEarthWindow(QObject):
     # ---- internals -----------------------------------------------------------
 
     def _go(self, url, bring_to_front):
-        fast = QgsSettings().value(FAST_SYNC_KEY, True, type=bool)
+        fast = settings.get("fast_sync")
         if fast and self.loaded_earth and "/web/@" in url:
             self.conn.call("Runtime.evaluate", expression=soft_nav_js(url))
         else:

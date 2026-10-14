@@ -4,9 +4,9 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "getools"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import google_urls as u  # noqa: E402
+from getools import google_urls as u  # noqa: E402
 
 
 def test_point_url_drops_pin():
