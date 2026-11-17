@@ -1,4 +1,4 @@
-"""GEtools for QGIS: Google Earth Web, Google Maps and Street View tools."""
+"""GEtools for QGIS: Google Earth (Web or Pro), Google Maps and Street View tools."""
 
 import math
 import os
@@ -9,6 +9,7 @@ from qgis.PyQt.QtGui import QColor, QDesktopServices, QIcon
 from qgis.PyQt.QtWidgets import QAction, QApplication, QMenu, QPushButton
 from qgis.core import (
     Qgis,
+    QgsApplication,
     QgsCoordinateTransform,
     QgsCsException,
     QgsDistanceArea,
@@ -93,14 +94,14 @@ class GEtoolsPlugin:
         self.toolbar.setObjectName("GEtoolsToolbar")
 
         self.open_in_ge = self._add_action(
-            "icon.png", "OpenInGE", "Click the map to open that spot in Google Earth Web",
+            "icon.png", "OpenInGE", "Click the map to open that spot in Google Earth",
             checkable=True)
         self.sync_ge = self._add_action(
-            "sync-icon.png", "SyncToGE", "Keep Google Earth Web in step with the QGIS map",
+            "sync-icon.png", "SyncToGE", "Keep Google Earth in step with the QGIS map",
             checkable=True)
         self.layer_to_ge = self._add_action(
             "earth_icon.png", "LayerToGE",
-            "Send the active vector layer (or its selected features) to Google Earth Web")
+            "Send the active vector layer (or its selected features) to Google Earth")
         self.open_in_maps = self._add_action(
             "location-pin.png", "OpenInMaps", "Click the map to open that spot in Google Maps",
             checkable=True)
@@ -115,7 +116,8 @@ class GEtoolsPlugin:
             None, "Clear targets", "Remove the target markers from QGIS and Google Earth",
             toolbar=False)
         self.settings_action = self._add_action(
-            None, "Settings…", "GEtools options", toolbar=False)
+            QgsApplication.getThemeIcon("/mActionOptions.svg"), "Settings…",
+            "GEtools settings: Google Earth version, sync, targets and more")
 
         self.tools = {
             self.open_in_ge: PointPickTool(
@@ -188,7 +190,10 @@ class GEtoolsPlugin:
     # ---- helpers -----------------------------------------------------------
 
     def _add_action(self, icon, text, tip, checkable=False, toolbar=True):
-        action = QAction(_icon(icon) if icon else QIcon(), text, self.iface.mainWindow())
+        """``icon`` is a file in icons/, a QIcon, or None."""
+        if isinstance(icon, str):
+            icon = _icon(icon)
+        action = QAction(icon or QIcon(), text, self.iface.mainWindow())
         action.setObjectName("mActionGEtools" + "".join(c for c in text if c.isalnum()))
         action.setToolTip(tip)
         action.setStatusTip(tip)
@@ -717,7 +722,7 @@ class GEtoolsPlugin:
         ok = lat_lon is not None
         lat, lon = lat_lon if ok else (0.0, 0.0)
         pt = QgsPointXY(event.mapPoint())
-        add("icon.png", "Open here in Google Earth Web",
+        add("icon.png", "Open here in Google Earth",
             lambda: self.open_point("earth", lat, lon, pt), ok)
         add("location-pin.png", "Open here in Google Maps",
             lambda: self.open_point("maps", lat, lon, pt), ok)

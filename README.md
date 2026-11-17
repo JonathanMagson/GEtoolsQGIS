@@ -28,7 +28,7 @@ Earth Web, and the right-click menu has **Copy lat, lon**.
 
 ## Install
 
-1. Download [`getools-1.5.0.zip`](https://github.com/JonathanMagson/GEtoolsQGIS/raw/main/getools-1.5.0.zip). After changing the code (and the version in `getools/metadata.txt`), rebuild it with `./build_zip.sh`, which names the zip after the version and updates this link.
+1. Download [`getools-1.5.1.zip`](https://github.com/JonathanMagson/GEtoolsQGIS/raw/main/getools-1.5.1.zip). After changing the code (and the version in `getools/metadata.txt`), rebuild it with `./build_zip.sh`, which names the zip after the version and updates this link.
 2. In QGIS: **Plugins ▸ Manage and Install Plugins ▸ Install from ZIP**, pick the zip, click **Install Plugin**.
 
 ## The Google Earth window
