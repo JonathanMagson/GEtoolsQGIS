@@ -15,11 +15,12 @@ from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
 from qgis.core import QgsApplication
 
 from . import cdp, settings
-from .earth_marker import CLEAR_MARKER_JS, VIEW_INFO_JS
+from .earth_marker import CLEAR_MARKER_JS, VIEW_INFO_JS, marker_js
 from .google_urls import soft_nav_js
 
 STARTUP_TIMEOUT_S = 20.0
 POLL_MS = 250
+SOFT_NAV_CHECK_MS = 2500  # time Earth Web gets to react to a fast-sync move
 
 
 class ExternalEarthWindow(QObject):
@@ -27,6 +28,8 @@ class ExternalEarthWindow(QObject):
 
     #: The window went away (user closed it, or the browser couldn't start).
     closed = pyqtSignal(str)
+    #: Something worth telling the user, e.g. fast sync turned itself off.
+    notice = pyqtSignal(str)
 
     def __init__(self, browser, parent=None):
         super().__init__(parent)
@@ -41,6 +44,9 @@ class ExternalEarthWindow(QObject):
         self.loaded_earth = False
         self.marker_js = None  # script drawing the target X, if one is set
         self.marker_script_id = None
+        # Fast sync is only trusted once Earth Web is seen to follow it.
+        self.soft_nav_works = None  # None: not known yet
+        self.soft_nav_check = None
         self.poll = QTimer(self)
         self.poll.setInterval(POLL_MS)
         self.poll.timeout.connect(self._try_connect)
@@ -53,15 +59,16 @@ class ExternalEarthWindow(QObject):
         """Connected to a live Earth window."""
         return self.conn is not None
 
-    def navigate(self, url, bring_to_front=False):
-        """Show ``url``, starting (or reattaching to) the browser if needed."""
+    def navigate(self, url, bring_to_front=False, reload=False):
+        """Show ``url``, starting (or reattaching to) the browser if needed.
+        ``reload`` forces a full page load instead of a fast-sync move."""
         self.pending_url = url
         if self.conn is None:
             if not self.poll.isActive():
                 self._start(url, bring_to_front)
             return
         try:
-            self._go(url, bring_to_front)
+            self._go(url, bring_to_front, reload)
         except cdp.CdpError:
             # The tab may have been replaced (e.g. a reload); look again.
             self._disconnect()
@@ -69,10 +76,14 @@ class ExternalEarthWindow(QObject):
                 self.closed.emit(f"The {self.name} window for Google Earth was closed.")
                 return
             try:
-                self._go(url, bring_to_front)
+                self._go(url, bring_to_front, reload)
             except cdp.CdpError as exc:
                 self._disconnect()
                 self.closed.emit(f"Lost contact with {self.name}: {exc}")
+
+    def set_targets(self, targets, color, size):
+        """Show an X at each ``(lat, lon)`` (none clears them)."""
+        self.set_markers(marker_js(targets, color, size) if targets else None)
 
     def set_markers(self, js):
         """Draw (``js``) or clear (``None``) the target Xs in the Earth window.
@@ -122,16 +133,40 @@ class ExternalEarthWindow(QObject):
 
     # ---- internals -----------------------------------------------------------
 
-    def _go(self, url, bring_to_front):
-        fast = settings.get("fast_sync")
+    def _go(self, url, bring_to_front, reload=False):
+        fast = (settings.get("fast_sync") and self.soft_nav_works is not False
+                and not reload)
         if fast and self.loaded_earth and "/web/@" in url:
             self.conn.call("Runtime.evaluate", expression=soft_nav_js(url))
+            if self.soft_nav_works is None:
+                self.soft_nav_check = url
+                QTimer.singleShot(SOFT_NAV_CHECK_MS, self._check_soft_nav)
         else:
             self.conn.call("Page.navigate", url=url)
             self.loaded_earth = True
         if bring_to_front:
             self._raise_window()
         self.pending_url = None
+
+    def _check_soft_nav(self):
+        """Earth Web rewrites its address in its own format once it has moved.
+        If it still shows exactly the address we pushed, it ignored the move:
+        reload there, and stop using fast sync for this session."""
+        url, self.soft_nav_check = self.soft_nav_check, None
+        if url is None or self.conn is None:
+            return
+        try:
+            href = self.conn.call("Runtime.evaluate", expression="location.href",
+                                  returnByValue=True).get("result", {}).get("value")
+            if href == url:
+                self.soft_nav_works = False
+                self.conn.call("Page.navigate", url=url)
+                self.notice.emit("Google Earth didn't follow fast sync, so it now reloads at "
+                                 "each move (slower, but it follows).")
+            else:
+                self.soft_nav_works = True
+        except cdp.CdpError:
+            self._disconnect()
 
     def _install_marker(self):
         if self.marker_script_id is not None:

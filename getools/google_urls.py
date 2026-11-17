@@ -94,9 +94,10 @@ def heading_from_rotation(rotation):
 # Moves the Google Earth camera without reloading the app: Earth Web is a
 # single-page app that follows its own history, so push the new "@..." URL
 # and announce it the way the browser's back/forward buttons would. Falls back
-# to a normal page load when Earth Web isn't the page that's showing.
+# to a normal page load when Earth Web isn't the page that's showing. Whether
+# Earth Web really follows is checked afterwards (see SoftNavCheck users).
 _SOFT_NAV_JS = """(function (url) {
-  if (location.host !== 'earth.google.com' || location.pathname.indexOf('/web') !== 0) {
+  if (location.pathname.indexOf('/web') !== 0) {
     location.href = url; return;
   }
   history.pushState(history.state, '', url);

@@ -8,6 +8,9 @@ _PREFIX = "getools/"
 
 # name: (default, type). Keys keep the names earlier versions used.
 DEFAULTS = {
+    # Which Google Earth: "web" (Google Earth Web) or "pro" (Google Earth Pro)
+    "earth_app": ("web", str),
+    "pro_path": ("", str),               # Earth Pro program; empty = find it
     # Google Earth window
     "browser": ("auto", str),            # cdp.BROWSER_CHOICES
     "browser_path": ("", str),           # used when browser == "custom"

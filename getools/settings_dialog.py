@@ -11,12 +11,14 @@ from qgis.PyQt.QtWidgets import (
     QGroupBox,
     QLabel,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QVBoxLayout,
 )
 from qgis.gui import QgsColorButton, QgsFileWidget
 
 from . import cdp, settings
+from .earth_pro import find_earth_pro
 
 _BROWSERS = (
     ("auto", "Automatic (Chrome, else Edge)"),
@@ -32,13 +34,31 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("GEtools Settings")
         layout = QVBoxLayout(self)
 
+        # ---- Which Google Earth ---------------------------------------------
+        box = QGroupBox("Google Earth version")
+        form = QFormLayout(box)
+        self.use_web = QRadioButton("Google Earth Web (cloud, runs in a browser)")
+        self.use_pro = QRadioButton("Google Earth Pro (desktop app)")
+        form.addRow(self.use_web)
+        form.addRow(self.use_pro)
+        self.pro_path = QgsFileWidget()
+        self.pro_path.setDialogTitle("Google Earth Pro program (googleearth.exe)")
+        self.pro_path.setToolTip("Leave empty to find Google Earth Pro automatically")
+        self.pro_found = QLabel()
+        self.pro_path.fileChanged.connect(self._earth_changed)
+        form.addRow("Earth Pro program", self.pro_path)
+        form.addRow("", self.pro_found)
+        self.use_web.toggled.connect(self._earth_changed)
+        layout.addWidget(box)
+
         # ---- Google Earth window --------------------------------------------
         box = QGroupBox("Google Earth window")
         form = QFormLayout(box)
-        if webengine:
-            form.addRow(QLabel(
-                "Google Earth opens in a panel inside QGIS (Qt WebEngine is available),\n"
-                "so the browser choice below isn't used."))
+        self.browser_label = QLabel(
+            "Google Earth Web opens in a panel inside QGIS (Qt WebEngine is available),\n"
+            "so the browser choice below isn't used." if webengine else
+            "Google Earth Web runs in its own Chrome or Edge window.")
+        form.addRow(self.browser_label)
         self.browser = QComboBox()
         for key, label in _BROWSERS:
             self.browser.addItem(label, key)
@@ -47,6 +67,7 @@ class SettingsDialog(QDialog):
         self.browser_found = QLabel()
         self.browser.currentIndexChanged.connect(self._browser_changed)
         self.browser_path.fileChanged.connect(self._browser_changed)
+        self.web_only = [self.browser_label, self.browser, self.browser_path, self.browser_found]
         form.addRow("Browser", self.browser)
         form.addRow("Browser program", self.browser_path)
         form.addRow("", self.browser_found)
@@ -58,7 +79,9 @@ class SettingsDialog(QDialog):
         # ---- Sync -----------------------------------------------------------
         box = QGroupBox("SyncToGE")
         form = QFormLayout(box)
-        self.fast_sync = QCheckBox("Fast sync: move Google Earth without reloading the page")
+        self.fast_sync = QCheckBox("Fast sync (Google Earth Web): move Google Earth without "
+                                   "reloading the page")
+        self.web_only.append(self.fast_sync)
         form.addRow(self.fast_sync)
         self.sync_delay = QSpinBox()
         self.sync_delay.setRange(100, 5000)
@@ -105,8 +128,9 @@ class SettingsDialog(QDialog):
         # ---- LayerToGE ------------------------------------------------------
         box = QGroupBox("LayerToGE")
         form = QFormLayout(box)
-        self.auto_import = QCheckBox("Load the layer into Google Earth automatically "
-                                     "(drops the KML onto it)")
+        self.auto_import = QCheckBox("Google Earth Web: load the layer automatically "
+                                     "(drops the KML onto it). Earth Pro always opens it.")
+        self.web_only.append(self.auto_import)
         form.addRow(self.auto_import)
         layout.addWidget(box)
 
@@ -126,6 +150,8 @@ class SettingsDialog(QDialog):
         self._load(settings.get)
 
     def _load(self, value):
+        (self.use_pro if value("earth_app") == "pro" else self.use_web).setChecked(True)
+        self.pro_path.setFilePath(value("pro_path"))
         self.browser.setCurrentIndex(max(0, self.browser.findData(value("browser"))))
         self.browser_path.setFilePath(value("browser_path"))
         self.raise_window.setChecked(value("raise_earth_window"))
@@ -141,6 +167,7 @@ class SettingsDialog(QDialog):
         self.target_size.setValue(value("target_size"))
         self.auto_import.setChecked(value("auto_import_layer"))
         self._browser_changed()
+        self._earth_changed()
 
     def _restore_defaults(self):
         self._load(lambda name: settings.DEFAULTS[name][0])
@@ -152,6 +179,17 @@ class SettingsDialog(QDialog):
         self.browser_found.setText(f"Using: {path}" if path else
                                    "Not found: live sync and the target X won't be available")
 
+    def _earth_changed(self, *_):
+        pro = self.use_pro.isChecked()
+        self.pro_path.setEnabled(pro)
+        for widget in self.web_only:
+            widget.setEnabled(not pro)
+        path = find_earth_pro(self.pro_path.filePath())
+        self.pro_found.setEnabled(pro)
+        self.pro_found.setText(
+            f"Using: {path}" if path else
+            "Not found: .kml files will open in whatever program opens them")
+
     def _shortcuts(self):
         """QGIS's own Keyboard Shortcuts dialog, where the GEtools ones live."""
         from qgis.gui import QgsConfigureShortcutsDialog
@@ -161,6 +199,8 @@ class SettingsDialog(QDialog):
 
     def save(self):
         """Write the dialog's values to the settings store."""
+        settings.set("earth_app", "pro" if self.use_pro.isChecked() else "web")
+        settings.set("pro_path", self.pro_path.filePath())
         settings.set("browser", self.browser.currentData())
         settings.set("browser_path", self.browser_path.filePath())
         settings.set("raise_earth_window", self.raise_window.isChecked())

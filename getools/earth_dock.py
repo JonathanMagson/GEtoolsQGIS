@@ -9,7 +9,7 @@ import json
 import os
 import re
 
-from qgis.PyQt.QtCore import QMimeData, QPoint, QPointF, QUrl, Qt
+from qgis.PyQt.QtCore import QMimeData, QPoint, QPointF, QTimer, QUrl, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices, QDragEnterEvent, QDragMoveEvent, QDropEvent
 from qgis.PyQt.QtWidgets import (
     QAction,
@@ -23,7 +23,7 @@ from qgis.PyQt.QtWidgets import (
 from qgis.core import QgsApplication
 
 from . import settings
-from .earth_marker import CLEAR_MARKER_JS, VIEW_INFO_JS
+from .earth_marker import CLEAR_MARKER_JS, VIEW_INFO_JS, marker_js
 from .google_urls import soft_nav_js
 
 # qgis.PyQt has no WebEngine wrapper, so import whichever PyQt QGIS runs on.
@@ -63,6 +63,9 @@ if WEBENGINE_AVAILABLE:
 
 
 class EarthDock(QDockWidget):
+    #: Something worth telling the user, e.g. fast sync turned itself off.
+    notice = pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__("Google Earth Web", parent)
         self.setObjectName("GEtoolsEarthDock")
@@ -97,6 +100,8 @@ class EarthDock(QDockWidget):
             web_settings.setAttribute(_attr(name), True)
         self.view.loadFinished.connect(self._on_load_finished)
         self._marker_js = None
+        # Fast sync is only trusted once Earth Web is seen to follow it.
+        self.soft_nav_works = None
         layout.addWidget(self.view)
 
         self.setWidget(body)
@@ -118,6 +123,10 @@ class EarthDock(QDockWidget):
         self._loaded = ok
         if self._marker_js:  # a full load wiped the target X; redraw it
             self.view.page().runJavaScript(self._marker_js)
+
+    def set_targets(self, targets, color, size):
+        """Show an X at each ``(lat, lon)`` (none clears them)."""
+        self.set_markers(marker_js(targets, color, size) if targets else None)
 
     def set_markers(self, js):
         """Draw (``js``) or clear (``None``) the target Xs over Earth Web."""
@@ -155,14 +164,32 @@ class EarthDock(QDockWidget):
             QApplication.sendEvent(target, event)
         return True
 
-    def navigate(self, url, bring_to_front=False):
+    def navigate(self, url, bring_to_front=False, reload=False):
         """Show ``url``; reuses the loaded app when fast sync is on."""
         self._current_url = url
-        if self._loaded and self.soft_nav.isChecked() and "/web/@" in url:
+        fast = self.soft_nav.isChecked() and self.soft_nav_works is not False and not reload
+        if self._loaded and fast and "/web/@" in url:
             self.view.page().runJavaScript(soft_nav_js(url))
+            if self.soft_nav_works is None:
+                QTimer.singleShot(2500, lambda: self.view.page().runJavaScript(
+                    "location.href", lambda href: self._soft_nav_checked(url, href)))
         else:
             self._loaded = False
             self.view.setUrl(QUrl(url))
+
+    def _soft_nav_checked(self, url, href):
+        """Earth Web rewrites its address once it has moved; an unchanged
+        address means it ignored the fast-sync move, so reload instead."""
+        if self.soft_nav_works is not None or url != self._current_url:
+            return
+        if href == url:
+            self.soft_nav_works = False
+            self._loaded = False
+            self.view.setUrl(QUrl(url))
+            self.notice.emit("Google Earth didn't follow fast sync, so it now reloads at "
+                             "each move (slower, but it follows).")
+        else:
+            self.soft_nav_works = True
 
     def reload(self):
         if self._current_url:

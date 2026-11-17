@@ -26,7 +26,7 @@ from . import settings
 from .camera import Camera, cameras_close, footprint, parse_camera
 from .cdp import find_browser
 from .earth_dock import DOCK_AREA, WEBENGINE_AVAILABLE, EarthDock
-from .earth_marker import marker_js
+from .earth_pro import EarthProLink, find_earth_pro
 from .external_earth import ExternalEarthWindow
 from .geo import WGS84, canvas_camera, extent_camera, to_lat_lon
 from .layer_export import export_layer_to_kml
@@ -65,6 +65,7 @@ class GEtoolsPlugin:
         self.shortcut_actions = []
         self.dock = None
         self.external = None  # Chrome/Edge window, when there's no WebEngine
+        self.pro = None  # Google Earth Pro link, when Earth Pro is chosen
         self.targets = []  # (lat, lon, QgsVertexMarker) per marked spot
         self.footprint_band = None
         self.tools = {}
@@ -107,9 +108,9 @@ class GEtoolsPlugin:
             "street-view.png", "OpenInStreet", "Click the map to open that spot in Street View",
             checkable=True)
         self.current_view = self._add_action(
-            "icon.png", "Open current view in Google Earth Web",
-            "Open Google Earth Web in your browser at the current map view",
-            toolbar=False)
+            "icon.png", "Open current view in Google Earth",
+            "Show the current map view in Google Earth (Google Earth Web opens in "
+            "your normal browser)", toolbar=False)
         self.clear_targets_action = self._add_action(
             None, "Clear targets", "Remove the target markers from QGIS and Google Earth",
             toolbar=False)
@@ -158,6 +159,9 @@ class GEtoolsPlugin:
         if self.external is not None:
             self.external.stop()
             self.external = None
+        if self.pro is not None:
+            self.pro.stop()
+            self.pro = None
         for signal, slot in ((self.canvas.destinationCrsChanged, self._reproject_overlays),
                              (getattr(self.canvas, "contextMenuAboutToShow", None),
                               self.populate_context_menu)):
@@ -219,6 +223,7 @@ class GEtoolsPlugin:
             self.dock = EarthDock(self.iface.mainWindow())
             self.iface.addDockWidget(DOCK_AREA, self.dock)
             self.dock.visibilityChanged.connect(self._dock_visibility_changed)
+            self.dock.notice.connect(self._message)
             self._push_markers()
         return self.dock
 
@@ -230,13 +235,33 @@ class GEtoolsPlugin:
                 return None
             self.external = ExternalEarthWindow(browser)
             self.external.closed.connect(self._external_closed)
+            self.external.notice.connect(self._message)
             self._push_markers()
         return self.external
 
+    def _earth_pro(self, create=True):
+        """The live link to Google Earth Pro. Without a known Earth Pro
+        program, the link file is opened with whatever opens .kml files."""
+        if self.pro is None and create:
+            try:
+                self.pro = EarthProLink(find_earth_pro(settings.get("pro_path")))
+            except OSError as exc:
+                self._warn(f"Couldn't start the link to Google Earth Pro: {exc}")
+                return None
+            self.pro.closed.connect(self._external_closed)
+            self._push_markers()
+        return self.pro
+
+    def _using_pro(self):
+        return settings.get("earth_app") == "pro"
+
     def _earth_view(self, create=True):
-        """The Google Earth view the plugin controls: the QGIS panel if Qt
-        WebEngine is available, else the Chrome/Edge window. ``None`` when
-        neither is possible (or, with ``create=False``, not open yet)."""
+        """The Google Earth the plugin controls: Google Earth Pro if chosen in
+        Settings; for Google Earth Web, the QGIS panel if Qt WebEngine is
+        available, else the Chrome/Edge window. ``None`` when none is
+        possible (or, with ``create=False``, not started yet)."""
+        if self._using_pro():
+            return self._earth_pro(create)
         if WEBENGINE_AVAILABLE:
             return self._earth_dock(create)
         return self._external_window(create)
@@ -246,16 +271,17 @@ class GEtoolsPlugin:
         view = self._earth_view(create=False)
         return view if view is not None and view.is_open() else None
 
-    def _show_in_view(self, view, url, bring_to_front=None):
+    def _show_in_view(self, view, url, bring_to_front=None, reload=False):
+        """Point a Google Earth view at ``url``, opening it if needed."""
         if bring_to_front is None:
             bring_to_front = settings.get("raise_earth_window")
         if view is self.dock:
             view.show()
             if bring_to_front:
                 view.raise_()
-            view.navigate(url)
+            view.navigate(url, reload=reload)
         else:
-            view.navigate(url, bring_to_front=bring_to_front)
+            view.navigate(url, bring_to_front=bring_to_front, reload=reload)
 
     def _sent(self, camera):
         """Remember that QGIS just pointed Google Earth at ``camera``."""
@@ -281,14 +307,23 @@ class GEtoolsPlugin:
         dialog = SettingsDialog(self.iface.mainWindow(), webengine=WEBENGINE_AVAILABLE)
         run = getattr(dialog, "exec", None) or dialog.exec_
         if run():
-            browser_before = (settings.get("browser"), settings.get("browser_path"))
+            def snapshot(*names):
+                return tuple(settings.get(n) for n in names)
+            browser_before = snapshot("browser", "browser_path")
+            earth_before = snapshot("earth_app", "pro_path")
             dialog.save()
-            if (settings.get("browser"), settings.get("browser_path")) != browser_before:
+            if snapshot("browser", "browser_path") != browser_before and self.external is not None:
                 # Use the newly chosen browser from the next Earth action on.
-                if self.external is not None:
-                    self.external.stop()
-                    self.external = None
+                self.external.stop()
+                self.external = None
+            if snapshot("pro_path") != earth_before[1:] and self.pro is not None:
+                self.pro.stop()
+                self.pro = None
             self.apply_settings()
+            if snapshot("earth_app") != earth_before[:1] and self.sync_ge.isChecked():
+                # Carry on syncing, in the Google Earth now chosen.
+                self.sync_ge.setChecked(False)
+                self.sync_ge.setChecked(True)
 
     def apply_settings(self):
         self.sync_timer.setInterval(settings.get("sync_delay_ms"))
@@ -337,13 +372,11 @@ class GEtoolsPlugin:
 
     def _push_markers(self):
         """Send the current targets to the Google Earth view(s)."""
-        js = None
-        if self.targets:
-            js = marker_js([(lat, lon) for lat, lon, _ in self.targets],
-                           settings.get("target_color"), settings.get("target_size"))
-        for view in (self.dock, self.external):
+        points = [(lat, lon) for lat, lon, _ in self.targets]
+        for view in (self.dock, self.external, self.pro):
             if view is not None:
-                view.set_markers(js)
+                view.set_targets(points, settings.get("target_color"),
+                                 settings.get("target_size"))
 
     def _reproject_overlays(self):
         transform = QgsCoordinateTransform(WGS84, self.canvas.mapSettings().destinationCrs(),
@@ -368,10 +401,10 @@ class GEtoolsPlugin:
             self._open_browser(urls.street_view_url(lat, lon))
 
     def open_point_in_earth(self, lat, lon):
-        """OpenInGE: show the spot in Google Earth Web, marked with an X.
+        """OpenInGE: show the spot in Google Earth, marked with an X.
 
-        Uses the Earth panel or the Chrome/Edge window even when sync is off,
-        because only a page the plugin controls can carry the X.
+        Uses the Google Earth the plugin controls even when sync is off (for
+        Earth Web, only a page the plugin controls can carry the X).
         """
         view = self._earth_view()
         if view is None:
@@ -392,6 +425,7 @@ class GEtoolsPlugin:
             view = self._earth_view()
             if view is None:
                 # Nothing that can be driven live: open the view once.
+                # (Earth Pro always has a view, so this is Earth Web only.)
                 self.sync_ge.setChecked(False)
                 self.open_current_view_in_browser()
                 self._warn(
@@ -399,13 +433,12 @@ class GEtoolsPlugin:
                     "Opened the current view in your browser instead. Choose a browser in "
                     "Web ▸ GEtools ▸ Settings.")
                 return
-            if view is self.dock:
-                view.show()
-                view.raise_()
             for signal in signals:
                 signal.connect(self.sync_timer.start)
-            self.last_earth_camera = None  # force the first sync
-            self.sync_now()
+            self.last_earth_camera = None
+            # Open Google Earth (or bring it forward) on the current view with
+            # a full load, whether or not it was open before.
+            self.sync_now(starting=True)
         else:
             self.sync_timer.stop()
             for signal in signals:
@@ -428,30 +461,36 @@ class GEtoolsPlugin:
             return None
         return urls.earth_view_url(cam.lat, cam.lon, cam.range, heading=cam.heading)
 
-    def sync_now(self):
+    def sync_now(self, starting=False):
         if not self.sync_ge.isChecked():
             return
         cam = self._canvas_camera()
         if cam is None:
+            if starting:
+                self._warn("The map centre can't be converted to latitude/longitude.")
             return
         # With two-way sync on, QGIS may just have moved to match Google
         # Earth; don't bounce that back (it would undo Earth's tilt).
-        if settings.get("two_way_sync") and cameras_close(cam, self.last_earth_camera):
+        if (not starting and settings.get("two_way_sync")
+                and cameras_close(cam, self.last_earth_camera)):
             return
-        view = self._earth_view(create=False)
+        view = self._earth_view(create=starting)
         if view is None:
             return
         self._sent(cam)
         url = urls.earth_view_url(cam.lat, cam.lon, cam.range, heading=cam.heading)
-        if view is self.dock:
-            view.navigate(url)
+        if starting:
+            self._show_in_view(view, url, reload=True)
         else:
-            view.navigate(url, bring_to_front=False)
+            self._show_in_view(view, url, bring_to_front=False)
 
     def open_current_view_in_browser(self):
         url = self.current_view_url()
         if url is None:
             self._warn("The map centre can't be converted to latitude/longitude.")
+        elif self._using_pro():
+            self._sent(self._canvas_camera())
+            self._show_in_view(self._earth_pro(), url)
         else:
             self._open_browser(url)
 
@@ -460,7 +499,7 @@ class GEtoolsPlugin:
     def _update_view_polling(self):
         wanted = settings.get("show_footprint") or (
             settings.get("two_way_sync") and self.sync_ge.isChecked())
-        has_view = self.dock is not None or self.external is not None
+        has_view = any(v is not None for v in (self.dock, self.external, self.pro))
         if wanted and has_view:
             if not self.view_timer.isActive():
                 self.view_timer.start()
@@ -576,6 +615,16 @@ class GEtoolsPlugin:
             self._message(f"KML export failed: {exc}", Qgis.Critical, duration=10)
             return
         what = ("selected features of " if selected_only else "") + f"'{layer.name()}'"
+
+        if self._using_pro():
+            # Earth Pro opens KML itself and flies to it.
+            pro = self._earth_pro()
+            if pro is not None and pro.open_kml(path, settings.get("raise_earth_window")):
+                self._message(f"Opened {what} in Google Earth Pro ({path}).", Qgis.Success)
+            else:
+                self._manual_import_message(path, f"Exported {what} to {path}, but "
+                                            "couldn't open Google Earth Pro.")
+            return
 
         extent = layer.boundingBoxOfSelected() if selected_only else layer.extent()
         camera = extent_camera(extent, layer.crs())
