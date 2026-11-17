@@ -1,6 +1,6 @@
 # GEtools for QGIS
 
-A QGIS port of the [GEtools ArcGIS Pro add-in](https://github.com/JonathanMagson/GEtoolsAppNWD).
+A QGIS port of my [GEtools add-in for ArcGIS Pro](https://github.com/JonathanMagson/GEtoolsAppNWD).
 It works with either **Google Earth Web** (earth.google.com/web, in a browser)
 or the **Google Earth Pro** desktop app: pick one in **Settings ▸ Google Earth
 version**. Google Earth Web is the default, so Google Earth Pro doesn't need to
@@ -9,14 +9,14 @@ be installed.
 Requires QGIS 3.16 or newer. The tools are on the **GEtools** toolbar, under
 **Web ▸ GEtools**, and on the map canvas right-click menu (**GEtools** submenu).
 
-| Tool | Shortcut | ArcGIS Pro add-in | QGIS plugin |
-|---|---|---|---|
-| **OpenInGE** | Alt+Shift+G | Wrote a placemark KML and opened it in Google Earth Pro | Click the map: Google Earth Web opens on that spot, marked with a red X |
-| **SyncToGE** | Alt+Shift+S | KML NetworkLink that Google Earth Pro re-read every 0.3 s | Google Earth Web follows pan, zoom and rotation; optionally QGIS follows Google Earth too |
-| **LayerToGE** | Alt+Shift+L | `arcpy` LayerToKML, opened in Google Earth Pro | Exports the active layer (or its selected features) to KML and loads it into Google Earth Web |
-| **OpenInMaps** | Alt+Shift+M | Google Maps in the browser | Same |
-| **OpenInStreet** | Alt+Shift+V | Street View in the browser | Same |
-| **Clear targets** | Alt+Shift+X | | Removes the target markers |
+| Tool | Shortcut | What it does |
+|---|---|---|
+| **OpenInGE** | Alt+Shift+G | Click the map: Google Earth opens on that spot, marked with a red X |
+| **SyncToGE** | Alt+Shift+S | Google Earth follows the map's pan, zoom and rotation; optionally the map follows Google Earth too |
+| **LayerToGE** | Alt+Shift+L | Exports the active layer (or its selected features) to KML and loads it into Google Earth |
+| **OpenInMaps** | Alt+Shift+M | Click the map: opens that spot in Google Maps |
+| **OpenInStreet** | Alt+Shift+V | Click the map: opens that spot in Street View |
+| **Clear targets** | Alt+Shift+X | Removes the target markers |
 
 The shortcuts use Alt+Shift, which neither QGIS nor its bundled plugins use.
 Change them in **Settings ▸ Keyboard Shortcuts** (or the button in GEtools
@@ -62,7 +62,7 @@ appears under Temporary Places as **GEtools (QGIS)** and keeps a live link to
 QGIS while both are open:
 
 - QGIS sends Google Earth where to look, only when there's somewhere new to
-  go. Unlike the ArcGIS add-in, Google Earth doesn't keep snapping back, so you
+  go. Google Earth doesn't keep snapping back to the map's view, so you
   can move around in it while sync is on.
 - Google Earth reports its view to QGIS whenever it stops moving (for two-way
   sync and the view outline).
