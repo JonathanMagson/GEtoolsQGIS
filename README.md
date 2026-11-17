@@ -28,7 +28,7 @@ Earth Web, and the right-click menu has **Copy lat, lon**.
 
 ## Install
 
-1. Download [`getools.zip`](https://github.com/JonathanMagson/GEtoolsQGIS/raw/main/getools.zip). After changing the code, rebuild it with `./build_zip.sh`.
+1. Download [`getools-1.5.0.zip`](https://github.com/JonathanMagson/GEtoolsQGIS/raw/main/getools-1.5.0.zip). After changing the code (and the version in `getools/metadata.txt`), rebuild it with `./build_zip.sh`, which names the zip after the version and updates this link.
 2. In QGIS: **Plugins ▸ Manage and Install Plugins ▸ Install from ZIP**, pick the zip, click **Install Plugin**.
 
 ## The Google Earth window
@@ -155,6 +155,6 @@ pytest tests
 
 ## Licence
 
-See `getools/LICENSE.txt`. SyncToGE descends from Chris Stayte's MIT-licensed
-[ArcPro_To_GoogleEarth](https://github.com/chrisstayte/ArcPro_To_GoogleEarth),
-and the icon credits from the original add-in are carried over.
+GEtools is released under the [MIT License](LICENSE), copyright Jonathan
+Magson. The toolbar icons are by other authors and keep their own terms; see
+[`getools/LICENSE.txt`](getools/LICENSE.txt) for their credits.
