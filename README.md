@@ -9,6 +9,10 @@ be installed.
 Requires QGIS 3.16 or newer. The tools are on the **GEtools** toolbar, under
 **Web ▸ GEtools**, and on the map canvas right-click menu (**GEtools** submenu).
 
+![The GEtools toolbar: OpenInGE, SyncToGE, LayerToGE, OpenInMaps, OpenInStreet and Settings](docs/images/toolbar.png)
+
+![The GEtools submenu on the map's right-click menu](docs/images/context-menu.png)
+
 | Tool | Shortcut | What it does |
 |---|---|---|
 | **OpenInGE** | Alt+Shift+G | Click the map: Google Earth opens on that spot, marked with a red X |
@@ -121,7 +125,9 @@ there's no label field.
 
 ## Settings
 
-**Web ▸ GEtools ▸ Settings…** (also on the right-click menu):
+**Web ▸ GEtools ▸ Settings…** (also on the toolbar and the right-click menu):
+
+![The GEtools Settings dialog](docs/images/settings.png)
 
 | Setting | Default |
 |---|---|
