@@ -1,8 +1,12 @@
 """SyncToGE without Qt WebEngine: a Chrome/Edge window driven from QGIS.
 
-The window runs on a profile of its own (in the QGIS settings folder), so it
-remembers Google's cookie consent between sessions without touching the
-user's everyday browser.
+The window runs on a profile of its own (in the QGIS settings folder, or the
+folder chosen in Settings), so it remembers Google's cookie consent between
+sessions without touching the user's everyday browser.
+
+On Linux and macOS the window is driven over a private pipe by default (see
+cdp.py); it then closes with QGIS, since nothing else can drive it. With the
+local port (always on Windows) it stays open, and QGIS reattaches to it.
 """
 
 import ctypes
@@ -12,15 +16,37 @@ import sys
 import time
 
 from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
-from qgis.core import QgsApplication
 
-from . import cdp, settings
+from . import cdp, chromium_download, settings
 from .earth_marker import CLEAR_MARKER_JS, VIEW_INFO_JS, marker_js
 from .google_urls import soft_nav_js
 
-STARTUP_TIMEOUT_S = 20.0
+STARTUP_TIMEOUT_S = cdp.STARTUP_TIMEOUT_S
 POLL_MS = 250
+DRAIN_MS = 1000           # pipe: read events, and notice the window closing
 SOFT_NAV_CHECK_MS = 2500  # time Earth Web gets to react to a fast-sync move
+HEALTH_CHECK_MS = 4000    # after the window opens: did Earth load, is there WebGL?
+
+
+def profile_dir():
+    """The browser profile folder for the Google Earth window."""
+    return os.path.join(settings.browser_data_dir(), "getools_browser")
+
+
+def find_earth_browser(choice, custom_path, data_dir=None):
+    """The browser for the Google Earth window: the one chosen in Settings;
+    with "auto", Chrome, else Edge, else a Chromium downloaded from Settings."""
+    found = cdp.find_browser(choice, custom_path)
+    if found is None and choice == "auto":
+        found = chromium_download.find_installed(data_dir or settings.browser_data_dir())
+    return found
+
+
+def launch_options():
+    """(connection, no_sandbox, software_gl) for a launch, from the settings."""
+    connection = cdp.resolve_connection(settings.get("connection"))
+    software_gl = cdp.resolve_software_gl(settings.get("software_webgl"))
+    return connection, settings.get("no_sandbox"), software_gl
 
 
 class ExternalEarthWindow(QObject):
@@ -30,12 +56,19 @@ class ExternalEarthWindow(QObject):
     closed = pyqtSignal(str)
     #: Something worth telling the user, e.g. fast sync turned itself off.
     notice = pyqtSignal(str)
+    #: A problem the user should fix: the browser didn't start, Earth didn't
+    #: load, or there's no WebGL.
+    problem = pyqtSignal(str)
 
     def __init__(self, browser, parent=None):
         super().__init__(parent)
         self.browser = browser
         self.name = cdp.browser_name(browser)
-        self.profile_dir = os.path.join(QgsApplication.qgisSettingsDirPath(), "getools_browser")
+        self.profile_dir = profile_dir()
+        self.connection = cdp.resolve_connection(settings.get("connection"))
+        self.no_sandbox = False
+        self.software_gl = False
+        self.pipe = None  # cdp.PipeBrowser, when driven over the private pipe
         self.conn = None
         self.pending_url = None
         self.process = None
@@ -50,6 +83,9 @@ class ExternalEarthWindow(QObject):
         self.poll = QTimer(self)
         self.poll.setInterval(POLL_MS)
         self.poll.timeout.connect(self._try_connect)
+        self.drain_timer = QTimer(self)
+        self.drain_timer.setInterval(DRAIN_MS)
+        self.drain_timer.timeout.connect(self._drain)
 
     @property
     def active(self):
@@ -126,10 +162,16 @@ class ExternalEarthWindow(QObject):
         return True
 
     def stop(self):
-        """Stop driving the window. The window itself is left open."""
+        """Stop driving the window. With the local port the window is left
+        open (QGIS can reattach to it); with the private pipe it closes,
+        since nothing could drive it any more."""
         self.poll.stop()
+        self.drain_timer.stop()
         self._disconnect()
         self.pending_url = None
+        if self.pipe is not None:
+            self.pipe.close_browser()
+            self.pipe = None
 
     # ---- internals -----------------------------------------------------------
 
@@ -142,8 +184,10 @@ class ExternalEarthWindow(QObject):
                 self.soft_nav_check = url
                 QTimer.singleShot(SOFT_NAV_CHECK_MS, self._check_soft_nav)
         else:
-            self.conn.call("Page.navigate", url=url)
+            result = self.conn.call("Page.navigate", url=url)
             self.loaded_earth = True
+            if result.get("errorText"):
+                self.problem.emit(self._load_failed_text(result["errorText"]))
         if bring_to_front:
             self._raise_window()
         self.pending_url = None
@@ -203,18 +247,32 @@ class ExternalEarthWindow(QObject):
         self.conn.call("Page.bringToFront")
 
     def _attach(self):
-        """Connect to a browser already running on our profile, if any."""
-        port = cdp.read_port(self.profile_dir)
-        if port is None:
-            return False
-        ws_url = cdp.find_page(port)
-        if ws_url is None:
-            return False
-        try:
-            self.conn = cdp.CdpConnection(ws_url)
-        except cdp.CdpError:
-            self.conn = None
-            return False
+        """Connect to the page of our browser, if it's up."""
+        if self.connection == "pipe":
+            if self.pipe is None:
+                return False
+            try:
+                if not self.pipe.ready():
+                    return False
+                self.conn = self.pipe.attach_page(
+                    new_url=self.pending_url or self.launched_url)
+            except cdp.CdpError:
+                self.conn = None
+            if self.conn is None:
+                return False
+        else:
+            # A browser already running on our profile, if any.
+            port = cdp.read_port(self.profile_dir)
+            if port is None:
+                return False
+            ws_url = cdp.find_page(port)
+            if ws_url is None:
+                return False
+            try:
+                self.conn = cdp.CdpConnection(ws_url)
+            except cdp.CdpError:
+                self.conn = None
+                return False
         # Whatever is showing may not be Earth Web yet; the first move is a
         # real navigation, then fast sync takes over.
         self.loaded_earth = False
@@ -226,16 +284,29 @@ class ExternalEarthWindow(QObject):
             except cdp.CdpError:
                 self._disconnect()
                 return False
+        if self.connection == "pipe":
+            self.drain_timer.start()
         return True
 
     def _start(self, url, bring_to_front):
-        if self._attach():
+        self.connection, self.no_sandbox, self.software_gl = launch_options()
+        if self.connection == "port" and self._attach():
             self.navigate(url, bring_to_front)
             return
+        args = cdp.browser_args(self.profile_dir, url, self.connection,
+                                no_sandbox=self.no_sandbox, software_gl=self.software_gl)
         try:
-            self.process = cdp.launch(self.browser, self.profile_dir, url)
+            if self.connection == "pipe":
+                if self.pipe is not None:
+                    self.pipe.close_browser()
+                self.pipe = cdp.launch_pipe(self.browser, self.profile_dir, args)
+                self.process = self.pipe.process
+            else:
+                self.process = cdp.launch(self.browser, self.profile_dir, url, args)
         except OSError as exc:
-            self.closed.emit(f"Couldn't start {self.name}: {exc}")
+            self.pipe = None
+            self.problem.emit(f"Couldn't start {self.name} ({self.browser}): {exc}")
+            self.closed.emit(f"Couldn't start {self.name}.")
             return
         self.started_at = time.monotonic()
         self.launched_url = url
@@ -247,16 +318,76 @@ class ExternalEarthWindow(QObject):
             # The window opened on the URL it was launched with, so it's
             # already on Earth Web; only move it if QGIS has moved since.
             self.loaded_earth = True
+            QTimer.singleShot(HEALTH_CHECK_MS, self._health_check)
             url, self.pending_url = self.pending_url, None
             if url and url != self.launched_url:
                 self.navigate(url)
             return
         exited = self.process is not None and self.process.poll() is not None
         timed_out = time.monotonic() - self.started_at > STARTUP_TIMEOUT_S
-        if timed_out or (exited and cdp.read_port(self.profile_dir) is None and
-                         time.monotonic() - self.started_at > 5):
+        if self.connection == "pipe":
+            # Nothing can take over a pipe browser: if it's gone, it failed.
+            failed = timed_out or exited or self.pipe is None or self.pipe.closed
+        else:
+            failed = timed_out or (exited and cdp.read_port(self.profile_dir) is None and
+                                   time.monotonic() - self.started_at > 5)
+        if failed:
             self.poll.stop()
-            self.closed.emit(f"{self.name} didn't start in time for live sync.")
+            if self.pipe is not None:
+                self.pipe.close_browser(wait=1.0)
+                self.pipe = None
+            code = self.process.poll() if self.process is not None else None
+            self.problem.emit(cdp.start_failure_message(self.name, code, self.profile_dir,
+                                                        self.no_sandbox))
+            self.closed.emit(f"{self.name} didn't start.")
+
+    def _drain(self):
+        """Pipe only: keep the pipe empty, and notice when the browser quits
+        (e.g. the user closed the Earth window)."""
+        if self.pipe is None:
+            self.drain_timer.stop()
+            return
+        try:
+            self.pipe.drain()
+        except cdp.CdpError:
+            self.drain_timer.stop()
+            self.conn = None
+            self.pipe.close()
+            self.pipe = None
+            self.closed.emit(f"The {self.name} window for Google Earth was closed.")
+
+    def _health_check(self):
+        """Once per window: tell the user if Google Earth couldn't load
+        (no internet, proxy) or the browser has no WebGL to draw it with."""
+        if self.conn is None:
+            return
+        try:
+            href = self.conn.call("Runtime.evaluate", expression="location.href",
+                                  returnByValue=True).get("result", {}).get("value") or ""
+            webgl = self.conn.call("Runtime.evaluate", expression=cdp.WEBGL_JS,
+                                   returnByValue=True).get("result", {}).get("value")
+        except cdp.CdpError:
+            return
+        if href.startswith("chrome-error:"):
+            self.problem.emit(self._load_failed_text())
+        elif webgl is None:
+            if self.software_gl:
+                self.problem.emit(
+                    f"{self.name} has no WebGL even with software WebGL, so Google Earth "
+                    f"can't draw the globe. Browser log: "
+                    f"{os.path.join(self.profile_dir, cdp.LOG_NAME)}")
+            else:
+                self.problem.emit(
+                    f"{self.name} has no WebGL here (no usable GPU, or a remote/X11 "
+                    "display), so Google Earth can't draw the globe. In GEtools Settings, "
+                    "set Software WebGL to On.")
+
+    def _load_failed_text(self, error=""):
+        detail = f" ({error})" if error else ""
+        return (f"Google Earth didn't load{detail}. This computer may have no internet "
+                "access, or may need a proxy: set https_proxy (e.g. export "
+                "https_proxy=http://proxy.example:8080) before starting QGIS, or run QGIS "
+                "where there is internet access.")
 
     def _disconnect(self):
         if self.conn is not None:

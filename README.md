@@ -32,7 +32,7 @@ Earth Web, and the right-click menu has **Copy lat, lon**.
 
 ## Install
 
-1. Download [`getools-1.5.1.zip`](https://github.com/JonathanMagson/GEtoolsQGIS/raw/main/getools-1.5.1.zip). After changing the code (and the version in `getools/metadata.txt`), rebuild it with `./build_zip.sh`, which names the zip after the version and updates this link.
+1. Download [`getools-1.6.0.zip`](https://github.com/JonathanMagson/GEtoolsQGIS/raw/main/getools-1.6.0.zip). After changing the code (and the version in `getools/metadata.txt`), rebuild it with `./build_zip.sh`, which names the zip after the version and updates this link.
 2. In QGIS: **Plugins ▸ Manage and Install Plugins ▸ Install from ZIP**, pick the zip, click **Install Plugin**.
 
 ## The Google Earth window
@@ -44,16 +44,46 @@ it and read it back:
 
 1. **A panel inside QGIS**, if your QGIS has Qt WebEngine (common on Linux;
    `python3-pyqt5.qtwebengine`).
-2. **A dedicated Chrome or Edge window** otherwise. This is the usual case on
-   Windows, where the QGIS installers don't include Qt WebEngine. Edge comes
-   with Windows, so nothing extra needs installing. The plugin steers the
-   window over the browser's local DevTools connection.
+2. **A dedicated Chrome, Edge or Chromium window** otherwise. This is the usual
+   case on Windows, where the QGIS installers don't include Qt WebEngine. Edge
+   comes with Windows, so nothing extra needs installing. The plugin steers the
+   window over the browser's DevTools connection:
+   - **Windows:** a local port that only listens on `127.0.0.1` (this
+     computer). The window stays open if QGIS closes, and QGIS reconnects to it.
+   - **Linux and macOS:** a private pipe between QGIS and the browser, so no
+     other user on a shared computer can control the window. The window closes
+     with QGIS.
    - The window has its own browser profile (`getools_browser` in your QGIS
      profile folder), separate from your everyday browser.
-   - The DevTools port only listens on `127.0.0.1` (this computer).
 
 If neither is available, the tools fall back to opening links in your default
 browser (no live sync, no X, no automatic layer loading).
+
+### Linux servers and HPC systems
+
+Google Earth Web also works when QGIS runs on a remote Linux machine, such as
+an HPC login node reached over SSH (Google Earth Pro isn't needed there):
+
+1. **No Chrome or Edge installed?** In Settings, click **Download Chromium…**.
+   It downloads Google's portable Chromium build ("Chrome for Testing", about
+   210 MB) into your QGIS profile folder. No admin rights are needed.
+2. Click **Test browser…**. It starts the browser and checks the connection,
+   the sandbox, WebGL (3D drawing) and access to Google Earth.
+3. If something fails, the message says what to change:
+   - **Software WebGL:** Google Earth needs WebGL. With X11 forwarding
+     (`ssh -X`), a remote desktop or no GPU, WebGL has to be drawn on the CPU.
+     **Automatic** turns this on for those displays.
+   - **Disable browser sandbox:** only if the browser won't start because the
+     system doesn't allow its sandbox (some HPC and container systems).
+   - **Browser data folder:** move the browser's profile (and the downloaded
+     Chromium) out of a home folder with a small quota.
+   - **No internet:** compute nodes are often offline. Run QGIS on a node with
+     internet access, or set `https_proxy` before starting QGIS if your site
+     uses a proxy.
+
+Over X11 forwarding every frame of the globe crosses the network, so expect
+Google Earth to be slower than on a desktop. A remote desktop (such as
+Open OnDemand or VNC), if your site has one, is usually faster.
 
 **Fast sync** moves Google Earth Web without reloading the page. The first time
 it's used, the plugin checks that Google Earth actually moved. If it didn't,
@@ -132,7 +162,11 @@ there's no label field.
 | Setting | Default |
 |---|---|
 | Google Earth version: Google Earth Web or Google Earth Pro (and the Earth Pro program, if not found automatically) | Google Earth Web |
-| Browser (Google Earth Web): Automatic (Chrome, else Edge), Chrome, Edge, or another Chromium browser | Automatic |
+| Browser (Google Earth Web): Automatic (Chrome, else Edge, else a downloaded Chromium), Chrome, Edge, or another Chromium browser | Automatic |
+| Connection: Automatic (private pipe on Linux and macOS, local port on Windows), private pipe, or local port | Automatic |
+| Software WebGL: Automatic (on for X11-forwarded, remote or GPU-less Linux displays), on, or off | Automatic |
+| Disable browser sandbox (`--no-sandbox`) | Off |
+| Browser data folder (browser profile and downloaded Chromium) | QGIS profile folder |
 | Bring Google Earth to front when OpenInGE or LayerToGE moves it (restores a minimized window; syncing never does) | On |
 | Fast sync (Google Earth Web): move Google Earth without reloading | On |
 | Sync delay: how long the map must stay still before Google Earth follows | 400 ms |
@@ -151,8 +185,9 @@ chosen.
 
 ## Development
 
-`getools/google_urls.py`, `camera.py`, `earth_marker.py`, `earth_pro_kml.py`
-and `cdp.py` have no QGIS dependency and are unit tested:
+`getools/google_urls.py`, `camera.py`, `earth_marker.py`, `earth_pro_kml.py`,
+`cdp.py` and `chromium_download.py` have no QGIS dependency and are unit
+tested:
 
 ```bash
 pip install pytest

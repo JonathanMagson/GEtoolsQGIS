@@ -1,6 +1,8 @@
 """All GEtools options, stored in the QGIS user profile (QgsSettings)."""
 
-from qgis.core import QgsSettings
+import os
+
+from qgis.core import QgsApplication, QgsSettings
 
 from .earth_marker import DEFAULT_COLOR, DEFAULT_SIZE
 
@@ -14,6 +16,10 @@ DEFAULTS = {
     # Google Earth window
     "browser": ("auto", str),            # cdp.BROWSER_CHOICES
     "browser_path": ("", str),           # used when browser == "custom"
+    "connection": ("auto", str),         # cdp.CONNECTION_CHOICES
+    "no_sandbox": (False, bool),         # start the browser with --no-sandbox
+    "software_webgl": ("auto", str),     # cdp.SOFTWARE_GL_CHOICES
+    "browser_data_dir": ("", str),       # browser profile, downloaded Chromium; "" = QGIS profile
     "raise_earth_window": (True, bool),
     # Sync
     "fast_sync": (True, bool),
@@ -31,6 +37,13 @@ DEFAULTS = {
     # LayerToGE
     "auto_import_layer": (True, bool),
 }
+
+
+def browser_data_dir(path=None):
+    """Folder for the Google Earth browser's profile and a downloaded
+    Chromium: the setting (or ``path``), else the QGIS profile folder."""
+    path = get("browser_data_dir") if path is None else path
+    return os.path.expanduser(path) if path else QgsApplication.qgisSettingsDirPath()
 
 
 def get(name):

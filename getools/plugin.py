@@ -14,6 +14,7 @@ from qgis.core import (
     QgsCsException,
     QgsDistanceArea,
     QgsGeometry,
+    QgsMessageLog,
     QgsPointXY,
     QgsProject,
     QgsRectangle,
@@ -25,10 +26,9 @@ from qgis.gui import QgsRubberBand, QgsVertexMarker
 from . import google_urls as urls
 from . import settings
 from .camera import Camera, cameras_close, footprint, parse_camera
-from .cdp import find_browser
 from .earth_dock import DOCK_AREA, WEBENGINE_AVAILABLE, EarthDock
 from .earth_pro import EarthProLink, find_earth_pro
-from .external_earth import ExternalEarthWindow
+from .external_earth import ExternalEarthWindow, find_earth_browser
 from .geo import WGS84, canvas_camera, extent_camera, to_lat_lon
 from .layer_export import export_layer_to_kml
 from .map_tools import PointPickTool
@@ -76,6 +76,7 @@ class GEtoolsPlugin:
         self.last_earth_camera = None
         self.sent_at = 0.0
         self.drop_job = None
+        self.no_browser_hint_shown = False
 
         self.sync_timer = QTimer()
         self.sync_timer.setSingleShot(True)
@@ -235,12 +236,13 @@ class GEtoolsPlugin:
     def _external_window(self, create=True):
         """The Chrome/Edge window driver, or None if no browser is set up."""
         if self.external is None and create:
-            browser = find_browser(settings.get("browser"), settings.get("browser_path"))
+            browser = find_earth_browser(settings.get("browser"), settings.get("browser_path"))
             if browser is None:
                 return None
             self.external = ExternalEarthWindow(browser)
             self.external.closed.connect(self._external_closed)
             self.external.notice.connect(self._message)
+            self.external.problem.connect(self._external_problem)
             self._push_markers()
         return self.external
 
@@ -299,6 +301,20 @@ class GEtoolsPlugin:
             self._warn(f"SyncToGE turned off: {reason}")
         self._remove_footprint()
 
+    def _external_problem(self, text):
+        """The Earth browser window couldn't do its job (didn't start, no
+        internet, no WebGL): say why, with a way into Settings."""
+        QgsMessageLog.logMessage(text, "GEtools", Qgis.Warning)
+        button = QPushButton("Settings…")
+        button.clicked.connect(self.show_settings)
+        self._message(text, Qgis.Warning, widget=button, duration=0)
+
+    def _no_browser_hint(self):
+        """What to do when there's no Chromium-family browser to drive."""
+        if os.name == "nt":
+            return "Choose a browser in Web ▸ GEtools ▸ Settings."
+        return ("Choose a browser, or use Download Chromium…, in Web ▸ GEtools ▸ Settings.")
+
     def _dock_visibility_changed(self, visible):
         if not visible and self.dock and self.dock.isHidden():
             # Closing the panel ends syncing, like deactivating SyncToGE did.
@@ -314,11 +330,14 @@ class GEtoolsPlugin:
         if run():
             def snapshot(*names):
                 return tuple(settings.get(n) for n in names)
-            browser_before = snapshot("browser", "browser_path")
+            browser_keys = ("browser", "browser_path", "connection", "no_sandbox",
+                            "software_webgl", "browser_data_dir")
+            browser_before = snapshot(*browser_keys)
             earth_before = snapshot("earth_app", "pro_path")
             dialog.save()
-            if snapshot("browser", "browser_path") != browser_before and self.external is not None:
-                # Use the newly chosen browser from the next Earth action on.
+            if snapshot(*browser_keys) != browser_before and self.external is not None:
+                # Use the newly chosen browser and options from the next
+                # Earth action on.
                 self.external.stop()
                 self.external = None
             if snapshot("pro_path") != earth_before[1:] and self.pro is not None:
@@ -414,6 +433,11 @@ class GEtoolsPlugin:
         view = self._earth_view()
         if view is None:
             self._open_browser(urls.earth_point_url(lat, lon, settings.get("point_range_m")))
+            if not self.no_browser_hint_shown:
+                self.no_browser_hint_shown = True
+                self._message("Opened in your default browser, without the target X. For the "
+                              "X and live sync, GEtools needs Google Chrome, Microsoft Edge or "
+                              "Chromium. " + self._no_browser_hint(), duration=12)
             return
         range_m, tilt = settings.get("point_range_m"), settings.get("point_tilt")
         self._sent(Camera(lat, lon, range_m, 0.0, tilt, urls.DEFAULT_FOV, 0.0))
@@ -434,9 +458,9 @@ class GEtoolsPlugin:
                 self.sync_ge.setChecked(False)
                 self.open_current_view_in_browser()
                 self._warn(
-                    "Live sync needs Google Chrome or Microsoft Edge (or Qt WebEngine in QGIS). "
-                    "Opened the current view in your browser instead. Choose a browser in "
-                    "Web ▸ GEtools ▸ Settings.")
+                    "Live sync needs Google Chrome, Microsoft Edge or Chromium (or Qt "
+                    "WebEngine in QGIS). Opened the current view in your browser instead. "
+                    + self._no_browser_hint())
                 return
             for signal in signals:
                 signal.connect(self.sync_timer.start)
